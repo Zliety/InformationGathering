@@ -39,6 +39,10 @@ jobs:
       MAIL_TO: ${{ secrets.MAIL_TO }}
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
       MAIL_SUBJECT: ${{ vars.MAIL_SUBJECT }}
+      MAIL_PROVIDER: ${{ vars.MAIL_PROVIDER }}
+      MS_TENANT_ID: ${{ vars.MS_TENANT_ID }}
+      MS_CLIENT_ID: ${{ vars.MS_CLIENT_ID }}
+      MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4

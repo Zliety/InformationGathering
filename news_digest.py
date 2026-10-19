@@ -14,7 +14,7 @@ import sys
 import tempfile
 import unicodedata
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 BEIJING = timezone(timedelta(hours=8))
@@ -66,8 +66,15 @@ def title_key(value):
 
 def configuration(dry_run=False):
     required = ['LLM_API_BASE_URL', 'LLM_MODEL', 'LLM_API_KEY']
+    mail_provider = setting('MAIL_PROVIDER', 'smtp').lower()
+    if mail_provider not in ('smtp', 'graph'):
+        raise DigestError('MAIL_PROVIDER must be smtp or graph')
     if not dry_run:
-        required += ['SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'MAIL_TO']
+        required += ['MAIL_TO']
+        if mail_provider == 'smtp':
+            required += ['SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
+        else:
+            required += ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MAIL_FROM']
     missing = [name for name in required if not setting(name)]
     if missing:
         raise DigestError('Missing configuration: ' + ', '.join(missing))
@@ -90,27 +97,35 @@ def configuration(dry_run=False):
     if tool not in ('web_search', 'web_search_preview'):
         raise DigestError('LLM_SEARCH_TOOL must be web_search or web_search_preview')
     security = setting('SMTP_SECURITY', 'ssl').lower()
-    if not dry_run and security not in ('ssl', 'starttls'):
+    if mail_provider == 'smtp' and not dry_run and security not in ('ssl', 'starttls'):
         raise DigestError('SMTP_SECURITY must be ssl or starttls')
     recipients = [s.strip() for s in setting('MAIL_TO').split(',') if s.strip()]
     sender = setting('MAIL_FROM', setting('SMTP_USERNAME'))
     if not dry_run:
+        if mail_provider == 'graph':
+            try:
+                import uuid
+                uuid.UUID(setting('MS_TENANT_ID'))
+                uuid.UUID(setting('MS_CLIENT_ID'))
+            except (ValueError, AttributeError):
+                raise DigestError('MS_TENANT_ID and MS_CLIENT_ID must be Entra ID UUIDs') from None
         if not recipients or any('@' not in s or '\r' in s or '\n' in s for s in [sender, *recipients]):
             raise DigestError('MAIL_FROM and MAIL_TO must be email addresses without line breaks')
         if any(c in setting('MAIL_SUBJECT') for c in '\r\n'):
             raise DigestError('MAIL_SUBJECT must not contain line breaks')
     prompt = setting('NEWS_PROMPT') or (ROOT / 'prompts/news_prompt.txt').read_text(encoding='utf-8').strip()
     return dict(base=base, style=style, extra=extra, tool=tool, prompt=prompt,
+                mail_provider=mail_provider,
                 security=security, recipients=recipients, sender=sender,
-                port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587),
+                port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587) if mail_provider == 'smtp' else None,
                 timeout=positive_int('LLM_TIMEOUT', 300),
                 history=Path(setting('HISTORY_PATH', str(ROOT / '.state/history.json'))))
 
 
 class SafeRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, new_url):
-        # Never forward the model API credential to a redirected endpoint.
-        raise DigestError('Model API redirected; configure its final HTTPS base URL')
+        # Never forward bearer credentials or client secrets to redirected endpoints.
+        raise DigestError('Authenticated HTTPS request redirected; configure the final endpoint URL')
 
 
 def fetch(request, timeout):
@@ -283,13 +298,18 @@ def html_table(rows):
 
 def send_email(config, text, rows):
     now = datetime.now(BEIJING)
+    subject = setting('MAIL_SUBJECT', '企业战略与人力资源资讯简报') + ' · ' + now.strftime('%Y-%m-%d')
+    markup = html_table(rows)
+    if config['mail_provider'] == 'graph':
+        send_graph_email(config, subject, text, markup)
+        return
     message = EmailMessage()
-    message['Subject'] = setting('MAIL_SUBJECT', '企业战略与人力资源资讯简报') + ' · ' + now.strftime('%Y-%m-%d')
+    message['Subject'] = subject
     message['From'] = config['sender']
     message['To'] = ', '.join(config['recipients'])
     message['Date'] = now
     message.set_content(text)
-    message.add_alternative(html_table(rows), subtype='html')
+    message.add_alternative(markup, subtype='html')
     context = ssl.create_default_context()
     if config['security'] == 'ssl':
         connection = smtplib.SMTP_SSL(setting('SMTP_HOST'), config['port'], timeout=45, context=context)
@@ -303,6 +323,45 @@ def send_email(config, text, rows):
         smtp.login(setting('SMTP_USERNAME'), setting('SMTP_PASSWORD'))
         if smtp.send_message(message):
             raise DigestError('SMTP rejected one or more recipients; some recipients may have received the report')
+
+
+def send_graph_email(config, subject, text, markup):
+    tenant = setting('MS_TENANT_ID')
+    client_id = setting('MS_CLIENT_ID')
+    client_secret = setting('MS_CLIENT_SECRET')
+    token_request = Request(
+        f'https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token',
+        data=urlencode({'client_id': client_id, 'client_secret': client_secret,
+                        'scope': 'https://graph.microsoft.com/.default',
+                        'grant_type': 'client_credentials'}).encode(),
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}, method='POST')
+    try:
+        token_data = json.loads(fetch(token_request, config['timeout']))
+        access_token = token_data['access_token']
+        if not isinstance(access_token, str) or not access_token:
+            raise ValueError
+    except HTTPError as exc:
+        raise DigestError(f'Microsoft OAuth token request returned HTTP {exc.code}; check tenant, app credentials, and consent') from None
+    except (KeyError, TypeError, ValueError):
+        raise DigestError('Microsoft OAuth returned an invalid token response') from None
+
+    payload = {
+        'message': {
+            'subject': subject,
+            'body': {'contentType': 'HTML', 'content': markup},
+            'toRecipients': [{'emailAddress': {'address': address}} for address in config['recipients']],
+        },
+        'saveToSentItems': True,
+    }
+    sender = quote(config['sender'], safe='')
+    graph_request = Request(
+        f'https://graph.microsoft.com/v1.0/users/{sender}/sendMail',
+        data=json.dumps(payload, ensure_ascii=False).encode('utf-8'), method='POST',
+        headers={'Authorization': 'Bearer ' + access_token, 'Content-Type': 'application/json'})
+    try:
+        fetch(graph_request, config['timeout'])
+    except HTTPError as exc:
+        raise DigestError(f'Microsoft Graph sendMail returned HTTP {exc.code}; check Mail.Send consent and sender mailbox access') from None
 
 
 def save_history(path, history, text, rows):
@@ -344,11 +403,11 @@ def main(argv=None):
         if args.dry_run:
             print('Dry run succeeded; email and official history unchanged')
         else:
-            phase = 'SMTP delivery'
+            phase = 'mail delivery'
             send_email(config, text, rows)
-            phase = 'history save (SMTP already accepted the email)'
+            phase = 'history save (mail service already accepted the email)'
             save_history(config['history'], history, text, rows)
-            print('SMTP accepted the report; local history saved', flush=True)
+            print('Mail service accepted the report; local history saved', flush=True)
         return 0
     except DigestError as exc:
         print(f'Error during {phase}: {exc}', file=sys.stderr)

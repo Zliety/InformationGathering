@@ -17,6 +17,7 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | `SMTP_PASSWORD` | 邮箱 SMTP 授权码或应用专用密码 |
 | `MAIL_TO` | 收件邮箱，多个地址用英文逗号分隔 |
 | `MAIL_FROM` | 可选，发件邮箱；默认使用 `SMTP_USERNAME`，需符合服务商要求 |
+| `MS_CLIENT_SECRET` | 仅 Microsoft Graph OAuth 模式需要；Entra 应用凭据，不是邮箱密码 |
 
 **Variables：**
 
@@ -33,6 +34,31 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | `SMTP_PORT` | 默认 SSL 为 `465`，STARTTLS 为 `587` |
 | `SMTP_SECURITY` | 默认 `ssl`；也可设为 `starttls` |
 | `MAIL_SUBJECT` | 默认 `企业战略与人力资源资讯简报`，自动附加北京时间日期 |
+| `MAIL_PROVIDER` | 默认 `smtp`；设为 `graph` 使用 Microsoft Graph OAuth |
+| `MS_TENANT_ID` | Microsoft Entra 租户 ID，Graph 模式必填 |
+| `MS_CLIENT_ID` | Entra 应用（客户端）ID，Graph 模式必填 |
+
+### 公司 Microsoft 365 Outlook：Graph OAuth（推荐）
+
+定时任务使用应用身份获取 OAuth 访问令牌，不需要保存或定期刷新邮箱密码。设置：
+
+```text
+MAIL_PROVIDER=graph
+MS_TENANT_ID=<公司 Entra 租户 ID>
+MS_CLIENT_ID=<Entra 应用程序（客户端）ID>
+MAIL_FROM=<允许发信的公司邮箱地址>
+MAIL_TO=<收件邮箱>
+```
+
+在 **Secrets** 中新增 `MS_CLIENT_SECRET`（应用客户端密钥的值）。`MS_TENANT_ID` 和 `MS_CLIENT_ID` 可放在 **Variables**。不要把客户端密钥复制到聊天、仓库文件或普通 Variable。
+
+这条方式需要公司 Microsoft Entra 管理员协助：注册或选择应用；给 Microsoft Graph 添加 **Application permission → Mail.Send** 并执行管理员同意；创建客户端密钥；确认该应用可以代表 `MAIL_FROM` 发信。应用权限可能覆盖组织内多个邮箱，建议 IT 使用 Exchange Online 应用访问控制将其限制为专用发件邮箱，并按公司密钥轮换规则更新 Secret。**不要授予 `Mail.Send` 后就假设范围仅限一个邮箱。** 若公司政策不允许应用权限或要求证书，可让 IT 提供批准的发信方案，再调整工作流。
+
+成功拿到令牌但发送返回 HTTP 403，通常需要管理员同意 `Mail.Send`、允许应用访问发件邮箱或检查租户策略。令牌请求失败时检查租户 ID、客户端 ID 与 Secret 是否对应同一 Entra 应用。日志只会显示错误类别和 HTTP 状态，不会输出令牌或 Secret。
+
+### 传统 SMTP 方式
+
+继续使用默认 `MAIL_PROVIDER=smtp` 时，配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME` 和 `SMTP_PASSWORD`。对于 Microsoft 365 常见值是 `smtp.office365.com`、`587`、`starttls`，但公司租户必须启用 SMTP AUTH 并允许账号密码认证。许多企业租户会禁用此方式；邮箱登录密码或应用密码不一定可用。公司 Outlook 优先使用上方 Graph OAuth 设置。
 
 ### Responses 接口（推荐）
 

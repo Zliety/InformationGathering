@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
+from urllib.parse import parse_qs
 from urllib.request import Request
 
 import news_digest as app
@@ -62,6 +63,25 @@ class DigestTests(unittest.TestCase):
             del os.environ[name]
         self.assertEqual(app.configuration(True)['port'], 465)
         with self.assertRaisesRegex(app.DigestError, 'SMTP_HOST'):
+            app.configuration()
+
+    def test_graph_configuration_requires_application_credentials_not_smtp_password(self):
+        os.environ.update(MAIL_PROVIDER='graph', MS_TENANT_ID='00000000-0000-0000-0000-000000000001',
+                          MS_CLIENT_ID='00000000-0000-0000-0000-000000000002',
+                          MS_CLIENT_SECRET='application-secret', MAIL_FROM='sender@example.com')
+        for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD'):
+            os.environ.pop(name, None)
+        config = app.configuration()
+        self.assertEqual(config['mail_provider'], 'graph')
+        self.assertIsNone(config['port'])
+        del os.environ['MS_CLIENT_SECRET']
+        with self.assertRaisesRegex(app.DigestError, 'MS_CLIENT_SECRET'):
+            app.configuration()
+
+    def test_graph_requires_valid_tenant_and_client_ids(self):
+        os.environ.update(MAIL_PROVIDER='graph', MS_TENANT_ID='tenant', MS_CLIENT_ID='client',
+                          MS_CLIENT_SECRET='secret', MAIL_FROM='sender@example.com')
+        with self.assertRaisesRegex(app.DigestError, 'UUIDs'):
             app.configuration()
 
     def test_rejects_invalid_or_reserved_extra_parameters(self):
@@ -194,8 +214,48 @@ class DigestTests(unittest.TestCase):
 
     def test_redirect_never_forwards_api_credentials(self):
         request = Request('https://model.example/v1/responses', headers={'Authorization': 'Bearer test-only-key'})
-        with self.assertRaisesRegex(app.DigestError, 'final HTTPS'):
+        with self.assertRaisesRegex(app.DigestError, 'final endpoint'):
             app.SafeRedirectHandler().redirect_request(request, None, 302, '', {}, 'https://other.example/api')
+
+    @patch('news_digest.fetch')
+    def test_graph_oauth_and_sendmail_payload(self, fetch):
+        os.environ.update(MAIL_PROVIDER='graph', MS_TENANT_ID='00000000-0000-0000-0000-000000000001',
+                          MS_CLIENT_ID='00000000-0000-0000-0000-000000000002',
+                          MS_CLIENT_SECRET='application-secret', MAIL_FROM='sender@example.com')
+        for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD'):
+            os.environ.pop(name, None)
+        config = app.configuration()
+        rows = app.parse_report(table(), sources(), [])
+        fetch.side_effect = [json.dumps({'access_token': 'access-token-secret'}).encode(), b'']
+        app.send_email(config, table(), rows)
+        token_request, mail_request = (call.args[0] for call in fetch.call_args_list)
+        self.assertEqual(token_request.full_url,
+                         'https://login.microsoftonline.com/00000000-0000-0000-0000-000000000001/oauth2/v2.0/token')
+        token_body = parse_qs(token_request.data.decode())
+        self.assertEqual(token_body['client_id'], ['00000000-0000-0000-0000-000000000002'])
+        self.assertEqual(token_body['client_secret'], ['application-secret'])
+        self.assertEqual(token_body['scope'], ['https://graph.microsoft.com/.default'])
+        self.assertEqual(token_body['grant_type'], ['client_credentials'])
+        self.assertEqual(mail_request.full_url, 'https://graph.microsoft.com/v1.0/users/sender%40example.com/sendMail')
+        self.assertEqual(mail_request.get_header('Authorization'), 'Bearer access-token-secret')
+        payload = json.loads(mail_request.data)
+        self.assertEqual(payload['message']['body']['contentType'], 'HTML')
+        self.assertEqual(len(payload['message']['toRecipients']), 2)
+        self.assertIn('<table ', payload['message']['body']['content'])
+        self.assertTrue(payload['saveToSentItems'])
+
+    @patch('news_digest.fetch')
+    def test_graph_errors_do_not_expose_application_credentials(self, fetch):
+        os.environ.update(MAIL_PROVIDER='graph', MS_TENANT_ID='00000000-0000-0000-0000-000000000001',
+                          MS_CLIENT_ID='00000000-0000-0000-0000-000000000002',
+                          MS_CLIENT_SECRET='application-secret', MAIL_FROM='sender@example.com')
+        config = app.configuration()
+        fetch.side_effect = HTTPError('https://login.microsoftonline.com', 401, 'application-secret', {}, None)
+        output = io.StringIO()
+        with redirect_stderr(output):
+            with self.assertRaisesRegex(app.DigestError, 'HTTP 401'):
+                app.send_email(config, table(), app.parse_report(table(), sources(), []))
+        self.assertNotIn('application-secret', output.getvalue())
 
     @patch('news_digest.smtplib.SMTP_SSL')
     def test_ssl_email_contains_only_report_in_plain_and_html_parts(self, factory):
@@ -260,7 +320,7 @@ class DigestTests(unittest.TestCase):
         output = io.StringIO()
         with redirect_stdout(output), redirect_stderr(output):
             self.assertEqual(app.main([]), 1)
-        self.assertIn('SMTP delivery', output.getvalue())
+        self.assertIn('mail delivery', output.getvalue())
         self.assertNotIn('sensitive', output.getvalue())
         self.assertFalse(self.path.exists())
 
