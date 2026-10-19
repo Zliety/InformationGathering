@@ -33,6 +33,7 @@ class WebSearchSmokeTests(unittest.TestCase):
         self.assertEqual(payload['tools'], [{'type': 'web_search'}])
         self.assertEqual(payload['tool_choice'], 'required')
         self.assertEqual(payload['include'], ['web_search_call.action.sources'])
+        self.assertEqual(payload['input'], smoke.QUESTION)
 
     def test_responses_without_completed_search_fails(self):
         response = {'status': 'completed', 'output': [

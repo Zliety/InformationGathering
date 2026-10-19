@@ -29,6 +29,14 @@ def provider_response(index):
     ]}).encode()
 
 
+def provider_pair(index):
+    text, _ = candidate(index)
+    plain = json.dumps({'status': 'completed', 'output': [
+        {'type': 'message', 'content': [{'type': 'output_text', 'text': text}]},
+    ]}).encode()
+    return [provider_response(index), plain]
+
+
 class CollectionTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -42,7 +50,7 @@ class CollectionTests(unittest.TestCase):
         self.addCleanup(environment.stop)
 
     def collect(self, results, history=None):
-        with patch('news_digest.request_search', side_effect=results) as search, redirect_stdout(io.StringIO()):
+        with patch('news_digest.request_article', side_effect=results) as search, redirect_stdout(io.StringIO()):
             text, sources = app.collect_report(app.configuration(True), history or [])
         return text, sources, search
 
@@ -52,12 +60,12 @@ class CollectionTests(unittest.TestCase):
         text, sources, search = self.collect([candidate(i) for i in range(7)], history)
         self.assertEqual(len(app.parse_report(text, sources, history)), 7)
         self.assertEqual(search.call_count, 7)
-        first_config, first_messages = search.call_args_list[0].args
+        first_config, _, _, first_excluded = search.call_args_list[0].args
         self.assertEqual(first_config['timeout'], 90)
-        self.assertNotIn('private-full-report-marker', json.dumps(first_messages))
-        self.assertIn('历史标题', first_messages[0]['content'])
-        self.assertIn('原文标题0', search.call_args_list[1].args[1][0]['content'])
-        self.assertEqual(first_messages[1]['content'], app.configuration(True)['prompt'])
+        self.assertNotIn('private-full-report-marker', json.dumps(first_excluded))
+        self.assertEqual(first_excluded[0]['title'], '历史标题')
+        self.assertEqual(search.call_args_list[1].args[3][-1]['title'], '原文标题0')
+        self.assertEqual(first_config['prompt'], app.configuration(True)['prompt'])
 
     def test_timeout_of_one_dimension_does_not_lose_other_articles(self):
         error = app.ModelAPIError('Model API returned HTTP 524', 524)
@@ -70,7 +78,7 @@ class CollectionTests(unittest.TestCase):
             self.collect(results)
 
     def test_authentication_error_stops_remaining_requests(self):
-        with patch('news_digest.request_search', side_effect=app.ModelAPIError('HTTP 401', 401)) as search:
+        with patch('news_digest.request_article', side_effect=app.ModelAPIError('HTTP 401', 401)) as search:
             with self.assertRaisesRegex(app.DigestError, 'HTTP 401'), redirect_stdout(io.StringIO()):
                 app.collect_report(app.configuration(True), [])
         self.assertEqual(search.call_count, 1)
@@ -82,7 +90,7 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(len(app.parse_report(text, sources, history)), 5)
 
     def test_no_news_does_not_send_or_save(self):
-        with patch('news_digest.request_search', return_value=('NO_NEWS', set())), \
+        with patch('news_digest.request_article', return_value=('NO_NEWS', set())), \
                 patch('news_digest.send_email') as send, redirect_stdout(io.StringIO()):
             self.assertEqual(app.main(['--dry-run']), 0)
         send.assert_not_called()
@@ -101,25 +109,32 @@ class CollectionTests(unittest.TestCase):
     def test_custom_prompt_preserved_and_batch_timeout_respects_global_timeout(self):
         os.environ.update(NEWS_PROMPT='自定义企业及城市要求', LLM_TIMEOUT='20', LLM_BATCH_TIMEOUT='40')
         _, _, search = self.collect([candidate(i) for i in range(7)])
-        config, messages = search.call_args.args
+        config, _, _, _ = search.call_args.args
         self.assertEqual(config['timeout'], 20)
-        self.assertEqual(messages[1]['content'], '自定义企业及城市要求')
+        self.assertEqual(config['prompt'], '自定义企业及城市要求')
 
     def test_real_batch_pipeline_uses_seven_searches_without_mail_or_history_in_dry_run(self):
-        with patch('news_digest.fetch', side_effect=[provider_response(i) for i in range(7)]) as fetch, \
+        with patch('news_digest.fetch', side_effect=[result for i in range(7) for result in provider_pair(i)]) as fetch, \
                 patch('news_digest.send_email') as send, redirect_stdout(io.StringIO()):
             self.assertEqual(app.main(['--dry-run']), 0)
-        self.assertEqual(fetch.call_count, 7)
+        self.assertEqual(fetch.call_count, 14)
         self.assertFalse(self.path.exists())
         send.assert_not_called()
-        for call in fetch.call_args_list:
+        for index, call in enumerate(fetch.call_args_list):
             payload = json.loads(call.args[0].data)
-            self.assertEqual(payload['tools'], [{'type': 'web_search'}])
+            self.assertIsInstance(payload['input'], str)
+            if index % 2 == 0:
+                self.assertEqual(payload['tools'], [{'type': 'web_search'}])
+                self.assertLess(len(payload['input']), 600)
+            else:
+                self.assertNotIn('tools', payload)
+                self.assertNotIn('tool_choice', payload)
+                self.assertNotIn('include', payload)
 
     def test_batched_pipeline_sends_only_validated_table_and_saves_history(self):
         os.environ.update(SMTP_HOST='smtp.example.com', SMTP_USERNAME='sender@example.com',
                           SMTP_PASSWORD='smtp-secret', MAIL_TO='recipient@example.com')
-        with patch('news_digest.fetch', side_effect=[provider_response(i) for i in range(7)]), \
+        with patch('news_digest.fetch', side_effect=[result for i in range(7) for result in provider_pair(i)]), \
                 patch('news_digest.send_email') as send, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(app.main([]), 0)
         self.assertEqual(len(send.call_args.args[2]), 7)
@@ -128,10 +143,10 @@ class CollectionTests(unittest.TestCase):
     def test_actual_http_524_isolated_and_remaining_tasks_finish(self):
         error = HTTPError('https://model.example/v1/responses', 524, 'Timeout', {}, io.BytesIO(b''))
         output = io.StringIO()
-        results = [error] + [provider_response(i) for i in range(6)]
+        results = [error] + [result for i in range(6) for result in provider_pair(i)]
         with patch('news_digest.fetch', side_effect=results) as fetch, redirect_stdout(output):
             self.assertEqual(app.main(['--dry-run']), 0)
-        self.assertEqual(fetch.call_count, 7)
+        self.assertEqual(fetch.call_count, 13)
         self.assertIn('HTTP 524', output.getvalue())
         self.assertIn('6 articles, 1 failed tasks', output.getvalue())
         self.assertFalse(self.path.exists())
@@ -144,11 +159,46 @@ class CollectionTests(unittest.TestCase):
             results.append(json.dumps({'choices': [{'finish_reason': 'stop', 'message': {
                 'content': text, 'annotations': [{'url': url} for url in sources],
             }}]}).encode())
+            results.append(json.dumps({'choices': [{'finish_reason': 'stop', 'message': {
+                'content': text,
+            }}]}).encode())
         with patch('news_digest.fetch', side_effect=results) as fetch, redirect_stdout(io.StringIO()):
             self.assertEqual(app.main(['--dry-run']), 0)
-        self.assertEqual(fetch.call_count, 7)
+        self.assertEqual(fetch.call_count, 14)
         self.assertTrue(all(call.args[0].full_url.endswith('/chat/completions')
                             for call in fetch.call_args_list))
+
+    def test_extraction_cannot_replace_retrieval_sources_with_its_own_citations(self):
+        _, formatter = provider_pair(2)
+        with patch('news_digest.fetch', side_effect=[provider_response(1), formatter]), \
+                redirect_stdout(io.StringIO()):
+            text, sources = app.request_article(app.configuration(True), app.SEARCH_DIMENSIONS[0],
+                                               datetime.now(app.BEIJING).date(), [])
+        self.assertEqual(sources, {'https://example.com/news/1'})
+        with self.assertRaisesRegex(app.DigestError, 'own search metadata'):
+            app.candidate_row(text, sources, datetime.now(app.BEIJING).date())
+
+    def test_error_log_identifies_extraction_failure_after_successful_retrieval(self):
+        error = HTTPError('https://model.example/v1/responses', 524, 'Timeout', {}, io.BytesIO(b''))
+        with patch('news_digest.fetch', side_effect=[provider_response(1), error]), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(app.ModelAPIError, 'Extraction stage:.*HTTP 524'):
+                app.request_article(app.configuration(True), app.SEARCH_DIMENSIONS[0],
+                                    datetime.now(app.BEIJING).date(), [])
+
+    def test_short_retrieval_excludes_full_prompt_and_history_but_extraction_preserves_them(self):
+        os.environ['NEWS_PROMPT'] = '宏观经济数据：重点关注河南省。\n自定义筛选要求标记'
+        excluded = [{'title': '历史标题标记', 'url': 'https://example.com/old'}]
+        with patch('news_digest.fetch', side_effect=provider_pair(1)) as fetch, redirect_stdout(io.StringIO()):
+            app.request_article(app.configuration(True), app.SEARCH_DIMENSIONS[0],
+                                datetime.now(app.BEIJING).date(), excluded)
+        retrieval, extraction = [json.loads(call.args[0].data) for call in fetch.call_args_list]
+        self.assertIn('河南省', retrieval['input'])
+        self.assertNotIn('自定义筛选要求标记', retrieval['input'])
+        self.assertNotIn('历史标题标记', retrieval['input'])
+        self.assertIn('自定义筛选要求标记', extraction['input'])
+        self.assertIn('历史标题标记', extraction['input'])
+        self.assertNotIn('tools', extraction)
 
 
 if __name__ == '__main__':
