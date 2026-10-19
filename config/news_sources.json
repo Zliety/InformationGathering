@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "sources": [
+    {"id": "stats", "name": "国家统计局", "type": "html", "url": "https://www.stats.gov.cn/sj/zxfb/", "allowed_domains": ["stats.gov.cn"], "link_pattern": "/sj/zxfb/\\d{6}/t\\d{8}_\\d+\\.html"},
+    {"id": "mohrss", "name": "人力资源和社会保障部", "type": "html", "url": "https://www.mohrss.gov.cn/SYrlzyhshbzb/dongtaixinwen/buneiyaowen/", "allowed_domains": ["mohrss.gov.cn"], "link_pattern": "/dongtaixinwen/.+\\.(?:html|shtml)"},
+    {"id": "gov", "name": "中国政府网", "type": "html", "url": "https://www.gov.cn/yaowen/liebiao/", "allowed_domains": ["gov.cn"], "link_pattern": "/(?:yaowen|zhengce)/.+content_\\d+\\.htm"},
+    {"id": "cls", "name": "财联社", "type": "newsnow", "platform": "cls-telegraph", "allowed_domains": ["cls.cn"]},
+    {"id": "ithome", "name": "IT之家", "type": "newsnow", "platform": "ithome", "allowed_domains": ["ithome.com"]},
+    {"id": "wallstreetcn", "name": "华尔街见闻", "type": "newsnow", "platform": "wallstreetcn-news", "allowed_domains": ["wallstreetcn.com", "wallstcn.com"]},
+    {"id": "36kr", "name": "36氪", "type": "newsnow", "platform": "36kr-quick", "allowed_domains": ["36kr.com"]}
+  ]
+}

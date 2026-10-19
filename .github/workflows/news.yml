@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Search and validate without emailing or saving history (uses model API)'
+        description: 'Collect articles and generate a preview without emailing or saving history'
         type: boolean
         default: true
 
@@ -25,16 +25,17 @@ jobs:
     env:
       LLM_API_BASE_URL: ${{ vars.LLM_API_BASE_URL }}
       LLM_API_STYLE: ${{ vars.LLM_API_STYLE }}
-      LLM_SEARCH_TOOL: ${{ vars.LLM_SEARCH_TOOL }}
       LLM_MODEL: ${{ vars.LLM_MODEL }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      LLM_EXTRA_BODY: ${{ vars.LLM_EXTRA_BODY }}
       LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
-      LLM_BATCH_TIMEOUT: ${{ vars.LLM_BATCH_TIMEOUT }}
-      NEWS_COLLECTION_MODE: ${{ vars.NEWS_COLLECTION_MODE }}
+      LLM_ARTICLE_TIMEOUT: ${{ vars.LLM_ARTICLE_TIMEOUT }}
       NEWS_PROMPT: ${{ vars.NEWS_PROMPT }}
-      SEARCH_PROVIDER: ${{ vars.SEARCH_PROVIDER }}
-      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+      NEWSNOW_API_URL: ${{ vars.NEWSNOW_API_URL }}
+      NEWS_SOURCES_PATH: ${{ vars.NEWS_SOURCES_PATH }}
+      NEWS_KEYWORDS: ${{ vars.NEWS_KEYWORDS }}
+      NEWS_MAX_ARTICLES: ${{ vars.NEWS_MAX_ARTICLES }}
+      NEWS_MAX_MODEL_CALLS: ${{ vars.NEWS_MAX_MODEL_CALLS }}
+      SOURCE_TIMEOUT: ${{ vars.SOURCE_TIMEOUT }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_PORT: ${{ vars.SMTP_PORT }}
       SMTP_SECURITY: ${{ vars.SMTP_SECURITY }}
@@ -56,11 +57,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
       - name: Restore previous three reports
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/restore_history.py
-      - name: Search, validate, and send
+      - name: Collect, summarize, validate, and send
         id: digest
         run: |
           if [ "$DRY_RUN" = "true" ]; then
@@ -77,3 +81,12 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
+      - name: Upload validated report preview
+        if: success() && steps.digest.outputs.report_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-digest-preview-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .state/report.md
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

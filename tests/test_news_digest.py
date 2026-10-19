@@ -14,7 +14,6 @@ from urllib.request import Request
 import news_digest as app
 
 ENV = {
-    'NEWS_COLLECTION_MODE': 'single',  # Retain regression coverage of the original collection mode.
     'LLM_API_BASE_URL': 'https://model.example/v1',
     'LLM_MODEL': 'search-model', 'LLM_API_KEY': 'test-only-key',
     'SMTP_HOST': 'smtp.example.com', 'SMTP_USERNAME': 'sender@example.com',
@@ -32,11 +31,19 @@ def sources(prefix='new'):
     return {f'https://example.com/{prefix}/{n}' for n in range(1, 5)}
 
 
-def response(prefix='new'):
+def documents():
+    return [dict(title=f'new标题{n}', source='国家统计局', url=f'https://example.com/new/{n}',
+                 published_date='2026-10-19',
+                 text='核心事实是本次发布的数据。原文数据均来自正式统计资料。') for n in range(1, 5)]
+
+
+def response():
+    text = json.dumps({'summary': [
+        {'text': '核心事实', 'evidence': '核心事实是本次发布的数据'},
+        {'text': '原文数据', 'evidence': '原文数据均来自正式统计资料'},
+    ]})
     return {'status': 'completed', 'output': [
-        {'type': 'web_search_call', 'status': 'completed',
-         'action': {'sources': [{'url': url} for url in sources(prefix)]}},
-        {'type': 'message', 'content': [{'type': 'output_text', 'text': table(prefix)}]},
+        {'type': 'message', 'content': [{'type': 'output_text', 'text': text}]},
     ]}
 
 
@@ -48,6 +55,9 @@ class DigestTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, {**ENV, 'HISTORY_PATH': str(self.path)}, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        self.collector = patch('news_digest.web_sources.collect_documents', return_value=(documents(), []))
+        self.collector.start()
+        self.addCleanup(self.collector.stop)
 
     def test_default_prompt_has_user_requirements(self):
         prompt = app.configuration()['prompt']
@@ -100,16 +110,6 @@ class DigestTests(unittest.TestCase):
         with self.assertRaisesRegex(app.DigestError, 'MS_REFRESH_TOKEN'):
             app.configuration()
 
-    def test_rejects_invalid_or_reserved_extra_parameters(self):
-        for value in ('not json', '[]', '{"messages":[]}', '{"tools":[]}', '{"stream":true}'):
-            with self.subTest(value=value), patch.dict(os.environ, {'LLM_EXTRA_BODY': value}):
-                with self.assertRaises(app.DigestError):
-                    app.configuration()
-
-    def test_chat_requires_search_configuration(self):
-        os.environ['LLM_API_STYLE'] = 'chat_completions'
-        with self.assertRaisesRegex(app.DigestError, 'search options'):
-            app.configuration()
 
     def test_rejects_insecure_or_invalid_configuration(self):
         for name, value in (('SMTP_SECURITY', 'none'), ('LLM_API_BASE_URL', 'http://model.example/v1'),
@@ -119,58 +119,6 @@ class DigestTests(unittest.TestCase):
                 with self.assertRaises(app.DigestError):
                     app.configuration()
 
-    @patch('news_digest.fetch')
-    def test_responses_request_forces_search_and_includes_history(self, fetch):
-        old = [{'table': 'old-report-marker', 'articles': []}]
-        fetch.return_value = json.dumps(response()).encode()
-        text, evidence = app.request_report(app.configuration(), old)
-        request = fetch.call_args.args[0]
-        payload = json.loads(request.data)
-        self.assertEqual(request.full_url, 'https://model.example/v1/responses')
-        self.assertEqual(request.get_header('Authorization'), 'Bearer test-only-key')
-        self.assertEqual(payload['tools'], [{'type': 'web_search'}])
-        self.assertEqual(payload['tool_choice'], 'required')
-        self.assertEqual(payload['include'], ['web_search_call.action.sources'])
-        self.assertIn('old-report-marker', payload['input'][0]['content'])
-        self.assertIn('+08:00', payload['input'][0]['content'])
-        self.assertEqual(text, table())
-        self.assertEqual(evidence, sources())
-
-    @patch('news_digest.fetch')
-    def test_custom_chat_search_options_and_citations(self, fetch):
-        os.environ.update(LLM_API_STYLE='chat_completions', LLM_EXTRA_BODY='{"web_search_options":{}}', NEWS_PROMPT='Custom prompt')
-        fetch.return_value = json.dumps({'choices': [{'finish_reason': 'stop', 'message': {
-            'content': table(), 'annotations': [{'type': 'url_citation', 'url_citation': {'url': url}} for url in sources()]}}]}).encode()
-        text, evidence = app.request_report(app.configuration(), [])
-        payload = json.loads(fetch.call_args.args[0].data)
-        self.assertIn('web_search_options', payload)
-        self.assertEqual(payload['messages'][1]['content'], 'Custom prompt')
-        self.assertEqual(evidence, sources())
-        self.assertEqual(text, table())
-
-    @patch('news_digest.fetch')
-    def test_model_without_completed_search_or_metadata_is_rejected(self, fetch):
-        no_search = response()
-        no_search['output'] = no_search['output'][1:]
-        no_metadata = response()
-        no_metadata['output'][0]['action'] = {}
-        truncated = response()
-        truncated['status'] = 'incomplete'
-        for result in (no_search, no_metadata, truncated):
-            with self.subTest(result=result):
-                fetch.return_value = json.dumps(result).encode()
-                with self.assertRaises(app.DigestError):
-                    app.request_report(app.configuration(), [])
-
-    @patch('news_digest.fetch')
-    def test_no_news_response_is_distinguished_from_a_report(self, fetch):
-        result = response()
-        result['output'][1]['content'][0]['text'] = 'NO_NEWS'
-        result['output'][0]['action']['sources'] = []
-        fetch.return_value = json.dumps(result).encode()
-        text, evidence = app.request_report(app.configuration(), [])
-        self.assertEqual(text, 'NO_NEWS')
-        self.assertEqual(evidence, set())
 
     @patch('news_digest.fetch')
     def test_http_error_logs_safe_code_and_request_id_not_message(self, fetch):
@@ -182,7 +130,7 @@ class DigestTests(unittest.TestCase):
                           {'x-request-id': 'req_test-123'}, io.BytesIO(body))
         fetch.side_effect = error
         with self.assertRaises(app.DigestError) as raised:
-            app.request_report(app.configuration(), [])
+            app.request_model(app.configuration(), 'ordinary question')
         self.assertIn('HTTP 502', str(raised.exception))
         self.assertIn('type=server_error', str(raised.exception))
         self.assertIn('code=upstream_error', str(raised.exception))
@@ -190,8 +138,6 @@ class DigestTests(unittest.TestCase):
         self.assertNotIn('test-only-key', str(raised.exception))
         self.assertNotIn('private prompt', str(raised.exception))
 
-    def test_generated_urls_are_not_evidence(self):
-        self.assertEqual(app.source_urls({'message': {'content': table()}, 'input': {'url': 'https://example.com'}}), set())
 
     def test_valid_table_preserves_title_and_summary(self):
         rows = app.parse_report(table(), sources(), [])
@@ -371,9 +317,9 @@ class DigestTests(unittest.TestCase):
                 self.assertEqual(send.called, should_send)
                 self.assertEqual(self.path.exists(), should_send)
                 if should_send:
-                    self.assertEqual(output_path.read_text(), 'report_created=true\n')
+                    self.assertEqual(output_path.read_text(), 'report_ready=true\nreport_created=true\n')
                 else:
-                    self.assertFalse(output_path.exists())
+                    self.assertEqual(output_path.read_text(), 'report_ready=true\n')
 
     @patch('news_digest.send_email')
     @patch('news_digest.fetch')
@@ -381,7 +327,7 @@ class DigestTests(unittest.TestCase):
         output_path = self.path.parent / 'github-output'
         os.environ['GITHUB_OUTPUT'] = str(output_path)
         result = response()
-        result['output'][1]['content'][0]['text'] = 'NO_NEWS'
+        result['output'][0]['content'][0]['text'] = 'NO_NEWS'
         fetch.return_value = json.dumps(result).encode()
         with redirect_stdout(io.StringIO()):
             self.assertEqual(app.main([]), 0)

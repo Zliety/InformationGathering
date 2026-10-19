@@ -1,170 +1,146 @@
 # InformationGathering
 
-GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略与人力资源情报提示词收集近三天新闻，将结果通过邮箱发送。无需 RSS，仅使用 Python 3.12 标准库。
+GitHub Actions 每天采集资讯，读取原文，使用自定义大模型接口整理摘要，再通过邮箱发送五列表格。
 
-你提供的完整提示词已保存在 [prompts/news_prompt.txt](prompts/news_prompt.txt)，覆盖七个维度、权威来源、4–8 条资讯、原文标题和原始链接。邮件正文为五列表格，摘要分点换行，没有额外正文；同时提供纯文本版本。
+**网页采集 → 正文提取 → 普通模型摘要 → 来源/日期/证据/历史排重 → 邮件发送。**
 
-默认采用两阶段分批搜集：每个维度先以简短文本调用联网搜索，取得一篇报道的标题、日期、来源和核心事实；再通过不启用搜索的普通模型请求，按完整提示词整理为结构化资料。程序逐条校验并在本地生成五列表格，通常生成 4–7 条资讯，符合 4–8 条的要求。搜索请求只含本维度主题及日期，不携带历史、完整日报提示词或 JSON 排版要求；完整要求和历史排重信息由后续整理阶段处理。无需新增必填环境变量。
+本项目不使用 RSS、Tavily 或模型的联网搜索工具，不需要额外搜索 API 密钥。现有 `LLM_API_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY` 以及邮件配置继续使用。模型只需要支持普通文本生成。
 
-联网资料可来自大模型内置搜索（默认 `SEARCH_PROVIDER=llm`），也可来自独立的 Tavily 搜索服务（`SEARCH_PROVIDER=tavily`）。当模型普通问答正常、联网查询持续返回 524 时，可使用独立搜索；此时大模型只做普通文本整理，不再依赖服务商的 `web_search`。
+## 数据来源与筛选
 
-## 1. 配置模型接口
+默认入口保存在 [config/news_sources.json](config/news_sources.json)：
 
-在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中配置。
-
-**Secrets：**
-
-| 名称 | 用途 |
+| 来源 | 获取方式 |
 | --- | --- |
-| `LLM_API_KEY` | 大模型接口密钥 |
-| `TAVILY_API_KEY` | 仅选择独立 Tavily 搜索时必填；在 Tavily 控制台获取的搜索服务密钥 |
-| `SMTP_USERNAME` | SMTP 登录账号，通常为邮箱地址 |
-| `SMTP_PASSWORD` | 邮箱 SMTP 授权码或应用专用密码 |
-| `MAIL_TO` | 收件邮箱，多个地址用英文逗号分隔 |
-| `MAIL_FROM` | 可选，发件邮箱；默认使用 `SMTP_USERNAME`，需符合服务商要求 |
-| `MS_CLIENT_SECRET` | 仅 Graph 应用授权模式需要；Entra 应用凭据，不是邮箱密码 |
-| `MS_REFRESH_TOKEN` | 仅个人 Outlook 委托 OAuth 模式需要；应妥善保密 |
+| 国家统计局、人力资源和社会保障部、中国政府网 | 直接解析网站新闻列表 |
+| 财联社、IT之家、华尔街见闻、36氪 | 通过 NewsNow 获取候选标题和原始链接，再访问原报道页面 |
 
-**Variables：**
+NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简介不会被当作新闻原文或发布日期**。正文由 [Trafilatura](https://github.com/adbar/trafilatura) 提取；缺少原文标题、有效日期或足够正文的文章会跳过并记录失败。公共入口有访问限制或变更时，可修改来源配置或设置自部署的 NewsNow 地址。
 
-| 名称 | 默认值 / 说明 |
-| --- | --- |
-| `LLM_API_BASE_URL` | 必填，例如 `https://api.openai.com/v1`；不要填写完整的 `/responses` 或 `/chat/completions` 路径 |
-| `LLM_MODEL` | 必填；使用大模型内置搜索时必须支持联网，使用 Tavily 时只需支持普通文本生成 |
-| `SEARCH_PROVIDER` | 默认 `llm`；设为 `tavily` 使用独立搜索，再由现有大模型整理资料 |
-| `LLM_API_STYLE` | 默认 `responses`；也可设为 `chat_completions` |
-| `LLM_SEARCH_TOOL` | Responses 模式默认 `web_search`；部分兼容服务使用 `web_search_preview` |
-| `LLM_EXTRA_BODY` | 大模型内置搜索的额外 JSON 参数；仅 `SEARCH_PROVIDER=llm` 的 Chat Completions 模式必填联网搜索参数；Tavily 模式不使用该参数 |
-| `LLM_TIMEOUT` | 默认 `300` 秒，单次模型请求超时 |
-| `LLM_BATCH_TIMEOUT` | 可选，分批模式每个搜索任务默认 `90` 秒，实际使用它与 `LLM_TIMEOUT` 的较小值；服务商已返回 524 时，增加此值不能改变服务商的超时限制 |
-| `NEWS_COLLECTION_MODE` | 默认 `batched`，按七个维度分批搜集；`single` 恢复一次生成整份报表的旧流程 |
-| `NEWS_PROMPT` | 可选，替换提示词文件内容；分批模式将其选题与来源要求传给每个维度的子任务，最终表格由程序生成。完全改变搜集维度时可使用 `single` 模式 |
-| `SMTP_HOST` | 必填，邮箱服务商的 SMTP 主机 |
-| `SMTP_PORT` | 默认 SSL 为 `465`，STARTTLS 为 `587` |
-| `SMTP_SECURITY` | 默认 `ssl`；也可设为 `starttls` |
-| `MAIL_SUBJECT` | 默认 `企业战略与人力资源资讯简报`，自动附加北京时间日期 |
-| `MAIL_PROVIDER` | 默认 `smtp`；设为 `graph` 使用 Microsoft Graph OAuth |
-| `MS_AUTH_MODE` | Graph 默认 `application`；个人邮箱使用 `delegated` |
-| `MS_AUTHORITY` | 委托模式默认 `consumers`，用于个人 Microsoft 账户 |
-| `MS_TENANT_ID` | Microsoft Entra 租户 ID，Graph 应用授权模式必填 |
-| `MS_CLIENT_ID` | Entra 应用（客户端）ID，Graph 模式必填 |
+程序优先挑选宏观经济、同业产业、指定竞争对手、劳动、人力资源报告、灾害疫情、人力变化等七个方向，尝试兼顾各方向。最终仅保留北京时间今天至前两天内、符合提示词的 4–8 条资讯。不保证指定网站每天都能覆盖全部方向；省政府和其他专业来源可按厂区所在地自行添加。
 
-### 使用独立搜索，避开模型服务商的联网接口
+完整用户提示词保留在 [prompts/news_prompt.txt](prompts/news_prompt.txt)，也可用 `NEWS_PROMPT` 替换。标题、日期、媒体与 URL 由采集值确定，模型只生成摘要。每条摘要至少两点，并提供原文逐字引用供程序核对；邮件仍只显示用户要求的五列表格，不显示内部引用字段。单篇正文最多传给模型前 8000 个字符，并标记截取。引用存在性校验不能独立证明摘要对原文的解释完全准确，仍应核对报道。
 
-1. 在 [Tavily 控制台](https://app.tavily.com/) 注册并获取 API Key，确认账户的可用额度。
-2. 在 GitHub 仓库 **Settings → Secrets and variables → Actions → Secrets** 新增 `TAVILY_API_KEY`。密钥只填到 Secret。
-3. 在 **Variables** 新增 `SEARCH_PROVIDER`，值设为 `tavily`。`NEWS_COLLECTION_MODE` 保持默认 `batched`；若已设置为 `single`，改回 `batched`。
-4. 继续使用现有 `LLM_API_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY`，无需大模型联网权限。到 **Daily news digest → Run workflow** 选择 `main`，勾选 `dry_run` 新建运行。
+## GitHub Actions 配置
 
-Tavily 直接返回搜索结果 URL、标题和原文资料，不请求其生成答案。每个维度最多取三篇报道，只有返回原文资料的结果才交给大模型，最终选一篇；程序核对输出标题和 URL 必须与所选结果匹配。单篇正文最多传递前 6000 个字符并标明截取，摘要只能基于提供的原文片段。没有原文资料时会报错，不用搜索摘要冒充原文。日期窗口仍由后续校验限制为今天至前两天。标题与 URL 的匹配不能独立证明所有摘要事实准确。
+在仓库 **Settings → Secrets and variables → Actions** 中配置。
 
-此模式每次运行最多七次 Tavily 搜索和七次普通模型请求，两家服务分别计费或扣减额度。搜索密钥仅发送到 `api.tavily.com`；大模型密钥仍仅发送到配置的模型接口。无需 RSS，也无需安装额外依赖。未配置新选项时，默认模式仍使用大模型服务商的搜索，持续的 524 不会因新增代码而自动消失。**Test model web search** 专门检查模型的内置搜索；Tavily 模式请通过日报的 `dry_run` 验证。
+### 模型必填项
 
-### 公司 Microsoft 365 Outlook：Graph OAuth（推荐）
+| 位置 | 名称 | 说明 |
+| --- | --- | --- |
+| Variables | `LLM_API_BASE_URL` | HTTPS 基础地址，例如 `https://api.facaipeanut.cn/v1`，不带 `/responses` 后缀 |
+| Variables | `LLM_MODEL` | 服务商支持的文本模型名称 |
+| Secrets | `LLM_API_KEY` | 模型密钥 |
 
-定时任务使用应用身份获取 OAuth 访问令牌，不需要保存或定期刷新邮箱密码。设置：
+`LLM_API_STYLE` 默认 `responses`，也支持 `chat_completions`。程序只发送普通文本输入，不附加 `tools`、`tool_choice`、搜索参数或引用元数据要求。
 
-```text
-MAIL_PROVIDER=graph
-MS_TENANT_ID=<公司 Entra 租户 ID>
-MS_CLIENT_ID=<Entra 应用程序（客户端）ID>
-MAIL_FROM=<允许发信的公司邮箱地址>
-MAIL_TO=<收件邮箱>
-```
+此前使用的 `SEARCH_PROVIDER`、`TAVILY_API_KEY`、`NEWS_COLLECTION_MODE`、`LLM_SEARCH_TOOL`、`LLM_EXTRA_BODY`、`LLM_BATCH_TIMEOUT` 已从部署流程移除，仓库里残留的同名变量不会生效，可删除。无需重新创建模型或邮箱凭据。
 
-在 **Secrets** 中新增 `MS_CLIENT_SECRET`（应用客户端密钥的值）。`MS_TENANT_ID` 和 `MS_CLIENT_ID` 可放在 **Variables**。不要把客户端密钥复制到聊天、仓库文件或普通 Variable。
+### 首次运行与预览
 
-这条方式需要公司 Microsoft Entra 管理员协助：注册或选择应用；给 Microsoft Graph 添加 **Application permission → Mail.Send** 并执行管理员同意；创建客户端密钥；确认该应用可以代表 `MAIL_FROM` 发信。应用权限可能覆盖组织内多个邮箱，建议 IT 使用 Exchange Online 应用访问控制将其限制为专用发件邮箱，并按公司密钥轮换规则更新 Secret。**不要授予 `Mail.Send` 后就假设范围仅限一个邮箱。** 若公司政策不允许应用权限或要求证书，可让 IT 提供批准的发信方案，再调整工作流。
+1. 打开 **Actions → Daily news digest → Run workflow**，选择 `main`，保持 `dry_run` 勾选，新建一次运行。旧记录的 **Re-run jobs** 使用旧提交。
+2. 工作流自动安装固定版本依赖，恢复历史，采集并生成摘要。`dry_run` 不需要邮箱配置、不发邮件、不更新正式历史，模型调用仍会消耗额度。
+3. 成功生成至少四条资讯后，在运行页面 **Artifacts → news-digest-preview-…** 下载 `report.md` 查看完整表格。
+4. 邮箱配置完成后，取消勾选 `dry_run` 才会实际发信。定时任务按发信模式运行。
 
-成功拿到令牌但发送返回 HTTP 403，通常需要管理员同意 `Mail.Send`、允许应用访问发件邮箱或检查租户策略。令牌请求失败时检查租户 ID、客户端 ID 与 Secret 是否对应同一 Entra 应用。日志只会显示错误类别和 HTTP 状态，不会输出令牌或 Secret。
+默认每天北京时间 **08:00（UTC 00:00）** 执行。可在 [.github/workflows/news.yml](.github/workflows/news.yml) 修改 cron。GitHub 定时可能延迟，公开仓库长期没有活动也可能暂停计划任务。
 
-### 传统 SMTP 方式
+来源全部不可访问时会失败，不会将访问失败当作“没有新闻”。部分来源或摘要失败但仍有四条合格资讯时可生成报表；有失败且不足四条则失败。正常完成但没有足够合格新资讯时成功跳过发信。401/403/404 模型错误会立即停止，不会自动重试模型或发信请求。
 
-继续使用默认 `MAIL_PROVIDER=smtp` 时，配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME` 和 `SMTP_PASSWORD`。对于 Microsoft 365 常见值是 `smtp.office365.com`、`587`、`starttls`，但公司租户必须启用 SMTP AUTH 并允许账号密码认证。许多企业租户会禁用此方式；邮箱登录密码或应用密码不一定可用。公司 Outlook 优先使用上方 Graph OAuth 设置。
+### 邮件：个人 Outlook / Hotmail
 
-### 个人 Outlook.com / Hotmail：委托 OAuth
+继续使用现有 Microsoft Graph 委托授权配置：
 
-如果邮箱是自己注册的个人 Microsoft 账户（如 `@outlook.com` 或 `@hotmail.com`），用委托 OAuth，而不是公司的应用权限模式：
+| 位置 | 名称 | 值或用途 |
+| --- | --- | --- |
+| Variables | `MAIL_PROVIDER` | `graph` |
+| Variables | `MS_AUTH_MODE` | `delegated` |
+| Variables | `MS_AUTHORITY` | `consumers` |
+| Variables | `MS_CLIENT_ID` | Entra 应用的 **Application (client) ID** |
+| Secrets | `MS_REFRESH_TOKEN` | 设备授权获得的刷新令牌 |
+| Secrets | `MAIL_TO` | 收件邮箱，多个地址用英文逗号分隔 |
 
-1. 在 Microsoft Entra 中注册应用，支持的账户类型选 **Personal Microsoft accounts**（或包含个人 Microsoft 账户的多租户类型）；在 **Authentication → Advanced settings** 启用 **Allow public client flows**。
-2. 在应用的 **API permissions** 中添加 Microsoft Graph **Delegated permission → Mail.Send**。
-3. 将应用概览的 **Application (client) ID** 保存为 GitHub Variable `MS_CLIENT_ID`。设置 Variables：`MAIL_PROVIDER=graph`、`MS_AUTH_MODE=delegated`、`MS_AUTHORITY=consumers`。
-4. 在本地终端用你的应用 ID 获取刷新令牌：
-
-    ```bash
-    MS_CLIENT_ID='<你的应用 Client ID>' python3 scripts/authorize_outlook.py
-    ```
-
-    按终端提示打开微软登录页面、输入一次性设备码，并登录个人 Outlook 账户。脚本最后会显示刷新令牌；将它直接保存为 GitHub Secret `MS_REFRESH_TOKEN`，不要分享或提交到仓库。刷新令牌相当于长期凭据。
-5. 在 Secrets 中设置 `MAIL_TO`。个人授权模式不需要 `MS_TENANT_ID`、`MS_CLIENT_SECRET`、`SMTP_USERNAME`、`SMTP_PASSWORD` 或 `MAIL_FROM`；发件地址就是完成设备登录的 Outlook 账户。
-6. 在 Actions 手动运行时取消勾选 `dry_run` 才会发信。`dry_run` 只验证资讯搜索，不测试 OAuth 邮件发送。
-
-刷新令牌可能撤销或过期；若 OAuth 返回 401，重新运行授权脚本并更新 `MS_REFRESH_TOKEN`。公司 IT 管理的邮箱应询问管理员使用上面的应用模式，个人设备登录模式可能被租户策略阻止。
-
-### Responses 接口（推荐）
-
-程序请求 `LLM_API_BASE_URL + /responses`，明确启用 `web_search` 工具并要求使用工具，而不是仅在提示词里要求“联网”。例如配置：
-
-```text
-LLM_API_BASE_URL=https://api.openai.com/v1
-LLM_API_STYLE=responses
-LLM_MODEL=gpt-4.1
-```
-
-`gpt-4.1` 只是配置示例；以服务商当前支持的模型、联网工具和账户权限为准。兼容服务须支持 Responses 联网工具、`tool_choice: required`、`include: ["web_search_call.action.sources"]`，并返回完成的搜索调用及来源元数据。
-
-### Chat Completions 兼容接口
-
-程序请求 `LLM_API_BASE_URL + /chat/completions`。不同服务商的联网参数不统一，须根据其文档设置 `LLM_EXTRA_BODY`。例如，支持 OpenAI Chat Completions 搜索模型的接口可使用：
-
-```text
-LLM_API_STYLE=chat_completions
-LLM_MODEL=gpt-4o-search-preview
-LLM_EXTRA_BODY={"web_search_options":{}}
-```
-
-支持 `enable_search` 的其他服务商可能需要 `{"enable_search":true}` 及其他参数，请以其文档为准。接口须返回 `annotations`、`citations`、`search_results` 或 `search_info` 中的真实来源 URL。程序会核对每条新闻的 URL 是否出现在这些服务商返回的元数据中；不支持联网、没有来源元数据、响应截断或表格格式错误都会失败，不会发送缺少证据的结果。**普通对话模型仅靠提示词无法获得实时搜索能力。**
-
-`LLM_EXTRA_BODY` 不允许覆盖模型、消息、流式开关或 Responses 工具等核心字段。模型输出会经过格式、来源 URL 和重复检查，但这些检查不能独立证明原文标题、报道日期或每一项摘要事实准确，仍需核对原始报道。
-
-### 单独测试模型接口
-
-如果日报在模型请求阶段失败，可打开 **Actions → Test model API → Run workflow**。这个手动工作流只使用 `LLM_API_BASE_URL`、`LLM_MODEL`、`LLM_API_STYLE` 和 `LLM_API_KEY`，向模型提问“17 加 25 等于多少”，不调用联网搜索、不需要邮箱配置，也不会发邮件。也可以在本地配置相同变量后运行 `python scripts/test_llm_api.py`。
-
-若基础问答也失败，检查接口地址/路径、API 密钥、模型权限、额度，或查看日志中的 HTTP 状态和请求 ID；若基础问答成功而日报仍在搜索阶段失败，说明基础模型接口可用，问题更可能在服务商的联网搜索工具、搜索参数或来源引用格式兼容性。此测试只验证普通模型请求，不代表资讯搜索已经可用。
-
-要单独确认搜索功能，可运行 **Actions → Test model web search → Run workflow**。它与日报检索阶段复用同一个请求函数，Responses 使用文本 `input`，按相同参数启用工具并验证来源 URL。它不需要邮箱，也不生成或保存日报。测试简单网站查询成功并不能证明复杂新闻查询一定成功。日报日志会显示 `Retrieval`（检索）或 `Extraction`（普通模型整理）阶段，以定位具体失败点。
-
-## 2. 配置定时与首次运行
-
-默认每天 **北京时间 08:00（UTC 00:00）** 运行。可以修改 [.github/workflows/news.yml](.github/workflows/news.yml) 的 cron。GitHub 调度可能延迟，仅在默认分支运行；公开仓库长期无活动时可能停用定时任务，请确认工作流已启用。
-
-将代码推送到仓库后，打开 **Actions → Daily news digest → Run workflow**。首次建议勾选 `dry_run`：真实联网搜索并校验结果，但不发邮件、不更新正式历史，也不会在日志中公开报表。取消勾选会实际发送邮件。如果模型确认没有至少4条符合条件的新资讯，运行会成功结束且不发信、不更新历史。调用模型和联网搜索可能产生费用，SMTP 服务商须允许 GitHub 托管 runner 发信。
-
-分批模式按顺序执行七个任务，日志显示每个维度的接受、排重、无资讯或失败结果。单个任务的 524、网络超时、JSON 格式或来源校验失败，不会阻止后续维度；最终有至少四条合格资讯才生成报表。少于四条且有任务失败时，运行失败；全部任务正常结束但新资讯不足时，成功跳过发信。401、403、404 会立即停止，以便修正授权、模型或接口配置。程序不会自动重试失败请求。每次运行最多七次搜索请求及七次普通整理请求，可能比单次生成模式费用更高；工作流最长运行 30 分钟。整理阶段不使用 `LLM_EXTRA_BODY` 中的搜索参数。
-
-例如 QQ 邮箱通常使用 `smtp.qq.com`、`465`、`ssl`，密码应为启用 SMTP 后生成的授权码；其他邮箱按服务商文档配置。不要在聊天或源码中填写密钥和授权码。
-
-## 3. 最近三次历史排重
-
-分批模式把最近三次正式报表的标题和 URL，以及本次已选资讯，提供给每个搜索任务排重，避免反复发送三份完整表格。旧版 `single` 模式仍发送历史全文。程序会排除相同 URL 或规范化标题；不同标题/链接报道同一事件的语义排重由模型执行，不能保证完全识别。
-
-邮件被 SMTP 服务器接受后，本地写入 `.state/history.json`，仅保留最近三份报表。Actions 将其存储到带本次运行 ID 和尝试次数的独立 artifact；下次运行通过 GitHub CLI 恢复同一分支最新的历史 artifact，不依赖临时 runner 磁盘或不可更新的缓存。旧版固定名称的 artifact 也会被识别。使用独立名称可在新 artifact 上传失败时保留上一次历史。需要 `actions: read`，工作流已配置。定时和手动任务按分支串行执行。
-
-artifact 保存期限为 90 天，组织策略可能缩短期限。首次运行或历史 artifact 全部过期/删除后无法恢复历史，从空历史开始，日志会提示；恢复出错或历史损坏时直接停止，防止静默丢失排重。artifact 包含报表内容，请按仓库可见性管理访问。
-
-SMTP 接受邮件不保证最终投递。若已发信后历史写入或 artifact 上传失败，本次邮件无法撤回，下次可能重报；应先检查运行日志。程序不自动重试模型或发信请求，避免额外费用和重复邮件。手动重新运行成功过的发信任务会产生一份新报表，并非重新发送旧报表。模型 API 失败日志会尽量附上服务商错误码和请求 ID，不输出错误正文或密钥。
-
-## 4. 本地开发
+如果尚未授权：在 Entra 注册支持个人 Microsoft 账户的应用，启用 **Allow public client flows**，添加 Microsoft Graph **Delegated → Mail.Send**。在本地运行：
 
 ```bash
-# 使用 shell 或密钥管理工具设置环境变量，不会自动读取 .env。
-python3 news_digest.py --validate-config  # 离线检查配置和历史
-python3 news_digest.py --dry-run          # 无需 SMTP 配置，真实搜索但不发邮件
-python3 news_digest.py                    # 实际发信，并更新本地历史
-python3 -m unittest discover -s tests -v  # 不联网，不使用真实密钥，不发邮件
+MS_CLIENT_ID='<你的应用 Client ID>' python3 scripts/authorize_outlook.py
 ```
 
-本地历史默认在 `.state/history.json`，可用 `HISTORY_PATH` 覆盖。模型请求携带北京时间和今天至前两天的日期范围。分批模式校验模型返回的发布日期是否落在窗口内，并逐条核对 URL 是否出现在对应任务的搜索元数据中。这些校验不能独立证明网页内容、发布日期和摘要事实真实，仍应核对原始报道。
+根据提示登录个人邮箱，将输出的刷新令牌直接保存到 GitHub Secret `MS_REFRESH_TOKEN`，不要提交到仓库或分享。个人委托模式的发件人就是完成授权的邮箱，不需要 SMTP 配置、客户端密钥或租户 ID。刷新令牌失效时重新授权并更新 Secret。
 
-日志只记录阶段、维度、条目数和错误类别，不输出接口密钥、邮箱密码、收件地址、完整提示词、历史报表或模型响应。模型会收到提示词及历史排重信息，请选择你信任的服务商。
+### 邮件：公司 Microsoft 365
+
+由公司管理员配置 Microsoft Graph 应用身份发信：
+
+- Variables：`MAIL_PROVIDER=graph`、`MS_AUTH_MODE=application`、`MS_TENANT_ID`、`MS_CLIENT_ID`。
+- Secrets：`MS_CLIENT_SECRET`、`MAIL_FROM`、`MAIL_TO`。
+- 应用需取得 Microsoft Graph **Application → Mail.Send** 的管理员同意，并限制到允许发送的邮箱范围。
+
+### 邮件：SMTP
+
+默认 `MAIL_PROVIDER=smtp`，需设置：
+
+- Variables：`SMTP_HOST`；可选 `SMTP_SECURITY=ssl`（默认端口 465）或 `starttls`（默认端口 587）、`SMTP_PORT`。
+- Secrets：`SMTP_USERNAME`、`SMTP_PASSWORD`、`MAIL_TO`；可选 `MAIL_FROM`，默认使用 `SMTP_USERNAME`。
+
+`SMTP_PASSWORD` 通常是邮箱授权码或应用密码。公司 Outlook 租户未允许 SMTP AUTH 时不能直接使用此方式。`MAIL_SUBJECT` 可选，默认“企业战略与人力资源资讯简报”，自动附加北京时间日期。
+
+## 采集配置
+
+以下均为可选 Variables，无需为首次运行全部创建：
+
+| 名称 | 默认值 | 用途 |
+| --- | --- | --- |
+| `NEWS_SOURCES_PATH` | `config/news_sources.json` | 来源配置文件路径 |
+| `NEWSNOW_API_URL` | `https://newsnow.busiyi.world/api/s` | 可替换为自部署 NewsNow 的 `/api/s` 地址，不带查询参数 |
+| `NEWS_KEYWORDS` | 空 | 用中英文逗号分隔的额外优先关键词，如厂区城市和公司名称 |
+| `NEWS_MAX_ARTICLES` | `24` | 最多尝试下载的候选文章数，范围 4–60 |
+| `NEWS_MAX_MODEL_CALLS` | `12` | 最多摘要请求数，范围 4–24；收集到八条合格摘要就提前结束 |
+| `SOURCE_TIMEOUT` | `15` | 单次来源请求超时秒数，最多 60 |
+| `LLM_TIMEOUT` | `300` | 模型请求超时秒数 |
+| `LLM_ARTICLE_TIMEOUT` | `90` | 单篇摘要超时，实际取它与 `LLM_TIMEOUT` 的较小值 |
+| `NEWS_PROMPT` | 提示词文件 | 自定义选题与事实要求，表格排版由程序负责 |
+
+网站列表的结构如下。自定义网页来源需给出新闻列表 URL、允许的原文域名和文章路径正则；日期、标题和正文仍从原报道提取。增加省政府来源时可参考：
+
+```json
+{
+  "id": "province",
+  "name": "某省人民政府",
+  "type": "html",
+  "url": "https://你的政府站点/新闻列表路径/",
+  "allowed_domains": ["你的政府站点"],
+  "link_pattern": "/新闻路径/.+\\.html"
+}
+```
+
+请求只访问配置的 HTTPS 域名，重定向也需在允许域名内；不会把模型密钥或邮件凭据发给新闻网站。来源列表并行读取最多四个，正文按优先顺序逐篇读取并限制总量，不尝试绕过登录、验证码或付费墙。网页改版、动态渲染或反爬可能导致正文提取失败，需要维护具体来源。
+
+## 历史与输出
+
+最近三次正式报表保存在 `.state/history.json`。程序先按 URL 和规范化标题排重，再将历史标题、链接及摘要交给模型跳过同一事件；同一事件换标题或链接的语义排重仍可能漏判。
+
+SMTP/Graph 接受邮件后才写入历史，并上传到带运行 ID 的独立 history artifact，下次恢复同一分支最新记录。旧版历史格式及固定名称 artifact 仍可恢复。历史 artifact 保存 90 天；预览 artifact 保存 7 天，仓库或组织策略可能缩短时间。artifact 可见性随仓库权限管理。
+
+邮件已发送但历史写入或上传失败时，下次可能重复报道；邮件服务器接受也不保证最终送达。历史损坏或恢复失败时会停止，避免静默清空排重信息。
+
+## 本地运行
+
+使用 Python 3.12。固定版本依赖保存在 `requirements.txt`。
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+# 使用 shell 或密钥管理工具设置环境变量；程序不会自动读取 .env。
+.venv/bin/python news_digest.py --dry-run --validate-config
+.venv/bin/python news_digest.py --dry-run
+.venv/bin/python news_digest.py
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+离线检查和回归测试不访问实际网站、不使用真实密钥、不发送邮件。实际采集需要能访问来源域名、NewsNow 地址和模型 API；Codex 环境的域名限制与 GitHub 托管 runner 的网络条件不同，某一环境的代理拒绝访问不能证明另一环境可用或不可用。
+
+已删除临时的 API/联网搜索测试脚本及其两个手动工作流。`Checks` 保留正文提取、来源限制、摘要证据、邮件/OAuth 和历史恢复的回归验证；`scripts/authorize_outlook.py` 和 `scripts/restore_history.py` 是正式功能脚本。
+
+来源入口方案参考 [NewsNow](https://github.com/ourongxing/newsnow)（MIT）；正文提取使用 [Trafilatura](https://github.com/adbar/trafilatura)（Apache-2.0）。程序不输出密钥、邮箱密码、完整提示词或模型响应到日志；有效报表可通过预览 artifact 查看。
