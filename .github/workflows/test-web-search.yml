@@ -1,0 +1,27 @@
+name: Test model web search
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web-search-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LLM_API_BASE_URL: ${{ vars.LLM_API_BASE_URL }}
+      LLM_API_STYLE: ${{ vars.LLM_API_STYLE }}
+      LLM_SEARCH_TOOL: ${{ vars.LLM_SEARCH_TOOL }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_EXTRA_BODY: ${{ vars.LLM_EXTRA_BODY }}
+      LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Search the web without generating a digest
+        run: python scripts/test_web_search.py
