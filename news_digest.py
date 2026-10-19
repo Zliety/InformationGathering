@@ -21,6 +21,7 @@ BEIJING = timezone(timedelta(hours=8))
 ROOT = Path(__file__).resolve().parent
 HEADERS = ('序号 (No.)', '标题 (Topic)', '摘要 (Summary)', '来源 (Source)', '备注 (Addition)')
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+MAX_ERROR_RESPONSE_BYTES = 16 * 1024
 MAX_HISTORY_BYTES = 1024 * 1024
 
 
@@ -157,6 +158,38 @@ def fetch(request, timeout):
     return data
 
 
+def http_error_details(exc):
+    """Return non-sensitive provider error codes and request IDs for support."""
+    details = []
+    try:
+        body = json.loads(exc.read(MAX_ERROR_RESPONSE_BYTES))
+        if isinstance(body, dict):
+            for candidate in (body.get('error'), body):
+                if not isinstance(candidate, dict):
+                    continue
+                for name in ('type', 'code'):
+                    value = candidate.get(name)
+                    if (isinstance(value, str)
+                            and re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}', value)
+                            and f'{name}={value}' not in details):
+                        details.append(f'{name}={value}')
+    except (AttributeError, OSError, TypeError, ValueError, UnicodeDecodeError):
+        pass
+    finally:
+        try:
+            exc.close()
+        except (AttributeError, OSError):
+            pass
+
+    headers = exc.headers or {}
+    for name in ('x-request-id', 'request-id', 'apim-request-id', 'x-correlation-id'):
+        value = headers.get(name, '')
+        if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', value):
+            details.append(f'request_id={value}')
+            break
+    return f" ({', '.join(details)})" if details else ''
+
+
 def load_history(path):
     if not path.exists():
         return []
@@ -228,6 +261,7 @@ def request_report(config, history):
         '近三次正式报表：\n' + json.dumps(history, ensure_ascii=False)
     )
     messages = [{'role': 'system', 'content': context}, {'role': 'user', 'content': config['prompt']}]
+    search_completed = False
     if config['style'] == 'responses':
         payload = {**config['extra'], 'model': setting('LLM_MODEL'), 'stream': False,
                    'input': messages, 'tools': [{'type': config['tool']}], 'tool_choice': 'required',
@@ -244,7 +278,8 @@ def request_report(config, history):
             if data.get('status') != 'completed':
                 raise DigestError('Model response did not complete')
             output = data['output']
-            if not any(item.get('type') == 'web_search_call' and item.get('status') == 'completed' for item in output):
+            search_completed = any(item.get('type') == 'web_search_call' and item.get('status') == 'completed' for item in output)
+            if not search_completed:
                 raise DigestError('Model response contains no completed web search')
             text = '\n'.join(part['text'] for item in output if item.get('type') == 'message'
                              for part in item.get('content', []) if part.get('type') == 'output_text')
@@ -255,13 +290,18 @@ def request_report(config, history):
             text = choice['message']['content']
         sources = source_urls(data)
     except HTTPError as exc:
-        raise DigestError(f'Model API returned HTTP {exc.code}; check endpoint, search support, model, authentication, and quota') from None
+        details = http_error_details(exc)
+        raise DigestError(f'Model API returned HTTP {exc.code}{details}; check endpoint, search support, model, authentication, and quota') from None
     except (KeyError, IndexError, AttributeError, TypeError, ValueError):
         raise DigestError('Model API returned an unsupported response structure') from None
     if not isinstance(text, str) or not text.strip():
         raise DigestError('Model API returned empty text')
+    if text.strip() == 'NO_NEWS' and search_completed:
+        return 'NO_NEWS', sources
     if not sources:
         raise DigestError('Model API returned no search source URLs; use an API that returns search/citation metadata')
+    if text.strip() == 'NO_NEWS':
+        return 'NO_NEWS', sources
     return text.strip(), sources
 
 
@@ -364,7 +404,8 @@ def send_graph_email(config, subject, text, markup):
         if not isinstance(access_token, str) or not access_token:
             raise ValueError
     except HTTPError as exc:
-        raise DigestError(f'Microsoft OAuth token request returned HTTP {exc.code}; check tenant, app credentials, and consent') from None
+        details = http_error_details(exc)
+        raise DigestError(f'Microsoft OAuth token request returned HTTP {exc.code}{details}; check tenant, app credentials, and consent') from None
     except (KeyError, TypeError, ValueError):
         raise DigestError('Microsoft OAuth returned an invalid token response') from None
 
@@ -386,7 +427,8 @@ def send_graph_email(config, subject, text, markup):
     try:
         fetch(graph_request, config['timeout'])
     except HTTPError as exc:
-        raise DigestError(f'Microsoft Graph sendMail returned HTTP {exc.code}; check Mail.Send consent and sender mailbox access') from None
+        details = http_error_details(exc)
+        raise DigestError(f'Microsoft Graph sendMail returned HTTP {exc.code}{details}; check Mail.Send consent and sender mailbox access') from None
 
 
 def save_history(path, history, text, rows):
@@ -407,6 +449,13 @@ def save_history(path, history, text, rows):
             temporary.unlink()
 
 
+def set_step_output(name, value):
+    output_path = os.environ.get('GITHUB_OUTPUT')
+    if output_path:
+        with open(output_path, 'a', encoding='utf-8') as output:
+            output.write(f'{name}={value}\n')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dry-run', action='store_true', help='Search and validate but do not send or update history')
@@ -422,6 +471,9 @@ def main(argv=None):
         print(f'Loaded {len(history)} previous reports; requesting model web search', flush=True)
         phase = 'model search'
         text, sources = request_report(config, history)
+        if text == 'NO_NEWS':
+            print('No eligible new news; email and report history unchanged')
+            return 0
         phase = 'report validation'
         rows = parse_report(text, sources, history)
         print(f'Validated {len(rows)} news items with search source URLs', flush=True)
@@ -432,6 +484,7 @@ def main(argv=None):
             send_email(config, text, rows)
             phase = 'history save (mail service already accepted the email)'
             save_history(config['history'], history, text, rows)
+            set_step_output('report_created', 'true')
             print('Mail service accepted the report; local history saved', flush=True)
         return 0
     except DigestError as exc:

@@ -57,6 +57,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/restore_history.py
       - name: Search, validate, and send
+        id: digest
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             python news_digest.py --dry-run
@@ -64,12 +65,11 @@ jobs:
             python news_digest.py
           fi
       - name: Persist report history
-        if: success() && env.DRY_RUN != 'true'
+        if: success() && env.DRY_RUN != 'true' && steps.digest.outputs.report_created == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: information-gathering-history
+          name: information-gathering-history-${{ github.run_id }}-${{ github.run_attempt }}
           path: .state/history.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
-          overwrite: true

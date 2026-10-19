@@ -23,9 +23,12 @@ def github_api(endpoint, paginate=False):
 def restore():
     repository = os.environ['GITHUB_REPOSITORY']
     branch = os.environ['GITHUB_REF_NAME']
-    pages = json.loads(github_api(f'repos/{repository}/actions/artifacts?name={NAME}&per_page=100', True))
+    pages = json.loads(github_api(f'repos/{repository}/actions/artifacts?per_page=100', True))
     matches = [artifact for page in pages for artifact in page['artifacts']
-               if not artifact['expired'] and artifact.get('workflow_run', {}).get('head_branch') == branch]
+               if (artifact.get('name') == NAME or
+                   (isinstance(artifact.get('name'), str) and artifact['name'].startswith(NAME + '-')))
+               and not artifact.get('expired', True)
+               and (artifact.get('workflow_run') or {}).get('head_branch') == branch]
     if not matches:
         print('No retained history for this branch; starting the first report')
         return

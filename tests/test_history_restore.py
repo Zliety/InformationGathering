@@ -33,10 +33,16 @@ class RestoreTests(unittest.TestCase):
     @patch('scripts.restore_history.github_api')
     def test_restores_latest_nonexpired_same_branch_history(self, api):
         artifacts = [
-            {'id': 1, 'created_at': '2026-01-01', 'expired': False, 'workflow_run': {'head_branch': 'main'}},
-            {'id': 2, 'created_at': '2026-01-02', 'expired': False, 'workflow_run': {'head_branch': 'main'}},
-            {'id': 3, 'created_at': '2026-01-03', 'expired': False, 'workflow_run': {'head_branch': 'feature'}},
-            {'id': 4, 'created_at': '2026-01-04', 'expired': True, 'workflow_run': {'head_branch': 'main'}},
+            {'id': 1, 'name': f'{history.NAME}-1', 'created_at': '2026-01-01', 'expired': False,
+             'workflow_run': {'head_branch': 'main'}},
+            {'id': 2, 'name': f'{history.NAME}-2', 'created_at': '2026-01-02', 'expired': False,
+             'workflow_run': {'head_branch': 'main'}},
+            {'id': 3, 'name': f'{history.NAME}-3', 'created_at': '2026-01-03', 'expired': False,
+             'workflow_run': {'head_branch': 'feature'}},
+            {'id': 4, 'name': f'{history.NAME}-4', 'created_at': '2026-01-04', 'expired': True,
+             'workflow_run': {'head_branch': 'main'}},
+            {'id': 5, 'name': 'unrelated-artifact', 'created_at': '2026-01-05', 'expired': False,
+             'workflow_run': {'head_branch': 'main'}},
         ]
         payload = '{"version":1,"reports":[]}'
         api.side_effect = [json.dumps([{'artifacts': artifacts[:2]}, {'artifacts': artifacts[2:]}]).encode(), archive(payload)]
@@ -44,6 +50,15 @@ class RestoreTests(unittest.TestCase):
             history.restore()
         self.assertEqual(Path('.state/history.json').read_text(), payload)
         self.assertEqual(api.call_args.args[0], 'repos/owner/repo/actions/artifacts/2/zip')
+
+    @patch('scripts.restore_history.github_api')
+    def test_restores_legacy_artifact_during_name_migration(self, api):
+        artifacts = [{'id': 8, 'name': history.NAME, 'created_at': '2026-01-01', 'expired': False,
+                      'workflow_run': {'head_branch': 'main'}}]
+        api.side_effect = [json.dumps([{'artifacts': artifacts}]).encode(), archive('{"version":1,"reports":[]}')]
+        with redirect_stdout(io.StringIO()):
+            history.restore()
+        self.assertEqual(api.call_args.args[0], 'repos/owner/repo/actions/artifacts/8/zip')
 
     @patch('scripts.restore_history.github_api', return_value=b'[{"artifacts":[]}]')
     def test_first_run_does_not_create_history(self, api):
@@ -61,7 +76,7 @@ class RestoreTests(unittest.TestCase):
 
     @patch('scripts.restore_history.github_api')
     def test_invalid_archive_is_rejected(self, api):
-        api.side_effect = [b'[{"artifacts":[{"id":1,"expired":false,"created_at":"2026-01-01","workflow_run":{"head_branch":"main"}}]}]', b'not zip']
+        api.side_effect = [b'[{"artifacts":[{"id":1,"name":"information-gathering-history-1","expired":false,"created_at":"2026-01-01","workflow_run":{"head_branch":"main"}}]}]', b'not zip']
         with self.assertRaises(zipfile.BadZipFile):
             history.restore()
         self.assertFalse(Path('.state/history.json').exists())

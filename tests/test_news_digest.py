@@ -161,6 +161,34 @@ class DigestTests(unittest.TestCase):
                 with self.assertRaises(app.DigestError):
                     app.request_report(app.configuration(), [])
 
+    @patch('news_digest.fetch')
+    def test_no_news_response_is_distinguished_from_a_report(self, fetch):
+        result = response()
+        result['output'][1]['content'][0]['text'] = 'NO_NEWS'
+        result['output'][0]['action']['sources'] = []
+        fetch.return_value = json.dumps(result).encode()
+        text, evidence = app.request_report(app.configuration(), [])
+        self.assertEqual(text, 'NO_NEWS')
+        self.assertEqual(evidence, set())
+
+    @patch('news_digest.fetch')
+    def test_http_error_logs_safe_code_and_request_id_not_message(self, fetch):
+        body = json.dumps({'error': {
+            'type': 'server_error', 'code': 'upstream_error',
+            'message': 'do not print test-only-key or the private prompt',
+        }}).encode()
+        error = HTTPError('https://model.example/v1/responses', 502, 'Bad Gateway',
+                          {'x-request-id': 'req_test-123'}, io.BytesIO(body))
+        fetch.side_effect = error
+        with self.assertRaises(app.DigestError) as raised:
+            app.request_report(app.configuration(), [])
+        self.assertIn('HTTP 502', str(raised.exception))
+        self.assertIn('type=server_error', str(raised.exception))
+        self.assertIn('code=upstream_error', str(raised.exception))
+        self.assertIn('request_id=req_test-123', str(raised.exception))
+        self.assertNotIn('test-only-key', str(raised.exception))
+        self.assertNotIn('private prompt', str(raised.exception))
+
     def test_generated_urls_are_not_evidence(self):
         self.assertEqual(app.source_urls({'message': {'content': table()}, 'input': {'url': 'https://example.com'}}), set())
 
@@ -330,14 +358,35 @@ class DigestTests(unittest.TestCase):
     @patch('news_digest.send_email')
     @patch('news_digest.fetch')
     def test_full_pipeline_and_dry_run_history_behavior(self, fetch, send):
+        output_path = self.path.parent / 'github-output'
+        os.environ['GITHUB_OUTPUT'] = str(output_path)
         for args, should_send in ((['--dry-run'], False), ([], True)):
             with self.subTest(args=args):
                 send.reset_mock()
+                output_path.write_text('') if output_path.exists() else None
                 fetch.return_value = json.dumps(response()).encode()
                 with redirect_stdout(io.StringIO()):
                     self.assertEqual(app.main(args), 0)
                 self.assertEqual(send.called, should_send)
                 self.assertEqual(self.path.exists(), should_send)
+                if should_send:
+                    self.assertEqual(output_path.read_text(), 'report_created=true\n')
+                else:
+                    self.assertFalse(output_path.exists())
+
+    @patch('news_digest.send_email')
+    @patch('news_digest.fetch')
+    def test_no_news_succeeds_without_sending_saving_or_uploading_history(self, fetch, send):
+        output_path = self.path.parent / 'github-output'
+        os.environ['GITHUB_OUTPUT'] = str(output_path)
+        result = response()
+        result['output'][1]['content'][0]['text'] = 'NO_NEWS'
+        fetch.return_value = json.dumps(result).encode()
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(app.main([]), 0)
+        send.assert_not_called()
+        self.assertFalse(self.path.exists())
+        self.assertFalse(output_path.exists())
 
     @patch('news_digest.send_email')
     @patch('news_digest.fetch')
