@@ -1,0 +1,68 @@
+name: Daily news digest
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Search and validate without emailing or saving history (uses model API)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: information-gathering-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LLM_API_BASE_URL: ${{ vars.LLM_API_BASE_URL }}
+      LLM_API_STYLE: ${{ vars.LLM_API_STYLE }}
+      LLM_SEARCH_TOOL: ${{ vars.LLM_SEARCH_TOOL }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_EXTRA_BODY: ${{ vars.LLM_EXTRA_BODY }}
+      LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
+      NEWS_PROMPT: ${{ vars.NEWS_PROMPT }}
+      SMTP_HOST: ${{ vars.SMTP_HOST }}
+      SMTP_PORT: ${{ vars.SMTP_PORT }}
+      SMTP_SECURITY: ${{ vars.SMTP_SECURITY }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
+      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      MAIL_SUBJECT: ${{ vars.MAIL_SUBJECT }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore previous three reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/restore_history.py
+      - name: Search, validate, and send
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python news_digest.py --dry-run
+          else
+            python news_digest.py
+          fi
+      - name: Persist report history
+        if: success() && env.DRY_RUN != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: information-gathering-history
+          path: .state/history.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
