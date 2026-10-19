@@ -17,7 +17,8 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | `SMTP_PASSWORD` | 邮箱 SMTP 授权码或应用专用密码 |
 | `MAIL_TO` | 收件邮箱，多个地址用英文逗号分隔 |
 | `MAIL_FROM` | 可选，发件邮箱；默认使用 `SMTP_USERNAME`，需符合服务商要求 |
-| `MS_CLIENT_SECRET` | 仅 Microsoft Graph OAuth 模式需要；Entra 应用凭据，不是邮箱密码 |
+| `MS_CLIENT_SECRET` | 仅 Graph 应用授权模式需要；Entra 应用凭据，不是邮箱密码 |
+| `MS_REFRESH_TOKEN` | 仅个人 Outlook 委托 OAuth 模式需要；应妥善保密 |
 
 **Variables：**
 
@@ -35,7 +36,9 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | `SMTP_SECURITY` | 默认 `ssl`；也可设为 `starttls` |
 | `MAIL_SUBJECT` | 默认 `企业战略与人力资源资讯简报`，自动附加北京时间日期 |
 | `MAIL_PROVIDER` | 默认 `smtp`；设为 `graph` 使用 Microsoft Graph OAuth |
-| `MS_TENANT_ID` | Microsoft Entra 租户 ID，Graph 模式必填 |
+| `MS_AUTH_MODE` | Graph 默认 `application`；个人邮箱使用 `delegated` |
+| `MS_AUTHORITY` | 委托模式默认 `consumers`，用于个人 Microsoft 账户 |
+| `MS_TENANT_ID` | Microsoft Entra 租户 ID，Graph 应用授权模式必填 |
 | `MS_CLIENT_ID` | Entra 应用（客户端）ID，Graph 模式必填 |
 
 ### 公司 Microsoft 365 Outlook：Graph OAuth（推荐）
@@ -59,6 +62,25 @@ MAIL_TO=<收件邮箱>
 ### 传统 SMTP 方式
 
 继续使用默认 `MAIL_PROVIDER=smtp` 时，配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME` 和 `SMTP_PASSWORD`。对于 Microsoft 365 常见值是 `smtp.office365.com`、`587`、`starttls`，但公司租户必须启用 SMTP AUTH 并允许账号密码认证。许多企业租户会禁用此方式；邮箱登录密码或应用密码不一定可用。公司 Outlook 优先使用上方 Graph OAuth 设置。
+
+### 个人 Outlook.com / Hotmail：委托 OAuth
+
+如果邮箱是自己注册的个人 Microsoft 账户（如 `@outlook.com` 或 `@hotmail.com`），用委托 OAuth，而不是公司的应用权限模式：
+
+1. 在 Microsoft Entra 中注册应用，支持的账户类型选 **Personal Microsoft accounts**（或包含个人 Microsoft 账户的多租户类型）；在 **Authentication → Advanced settings** 启用 **Allow public client flows**。
+2. 在应用的 **API permissions** 中添加 Microsoft Graph **Delegated permission → Mail.Send**。
+3. 将应用概览的 **Application (client) ID** 保存为 GitHub Variable `MS_CLIENT_ID`。设置 Variables：`MAIL_PROVIDER=graph`、`MS_AUTH_MODE=delegated`、`MS_AUTHORITY=consumers`。
+4. 在本地终端用你的应用 ID 获取刷新令牌：
+
+    ```bash
+    MS_CLIENT_ID='<你的应用 Client ID>' python3 scripts/authorize_outlook.py
+    ```
+
+    按终端提示打开微软登录页面、输入一次性设备码，并登录个人 Outlook 账户。脚本最后会显示刷新令牌；将它直接保存为 GitHub Secret `MS_REFRESH_TOKEN`，不要分享或提交到仓库。刷新令牌相当于长期凭据。
+5. 在 Secrets 中设置 `MAIL_TO`。个人授权模式不需要 `MS_TENANT_ID`、`MS_CLIENT_SECRET`、`SMTP_USERNAME`、`SMTP_PASSWORD` 或 `MAIL_FROM`；发件地址就是完成设备登录的 Outlook 账户。
+6. 在 Actions 手动运行时取消勾选 `dry_run` 才会发信。`dry_run` 只验证资讯搜索，不测试 OAuth 邮件发送。
+
+刷新令牌可能撤销或过期；若 OAuth 返回 401，重新运行授权脚本并更新 `MS_REFRESH_TOKEN`。公司 IT 管理的邮箱应询问管理员使用上面的应用模式，个人设备登录模式可能被租户策略阻止。
 
 ### Responses 接口（推荐）
 

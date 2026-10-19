@@ -40,9 +40,12 @@ jobs:
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
       MAIL_SUBJECT: ${{ vars.MAIL_SUBJECT }}
       MAIL_PROVIDER: ${{ vars.MAIL_PROVIDER }}
+      MS_AUTH_MODE: ${{ vars.MS_AUTH_MODE }}
+      MS_AUTHORITY: ${{ vars.MS_AUTHORITY }}
       MS_TENANT_ID: ${{ vars.MS_TENANT_ID }}
       MS_CLIENT_ID: ${{ vars.MS_CLIENT_ID }}
       MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+      MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4

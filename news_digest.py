@@ -74,7 +74,14 @@ def configuration(dry_run=False):
         if mail_provider == 'smtp':
             required += ['SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
         else:
-            required += ['MS_TENANT_ID', 'MS_CLIENT_ID', 'MS_CLIENT_SECRET', 'MAIL_FROM']
+            auth_mode = setting('MS_AUTH_MODE', 'application').lower()
+            if auth_mode not in ('application', 'delegated'):
+                raise DigestError('MS_AUTH_MODE must be application or delegated')
+            required += ['MS_CLIENT_ID']
+            if auth_mode == 'application':
+                required += ['MS_TENANT_ID', 'MS_CLIENT_SECRET', 'MAIL_FROM']
+            else:
+                required += ['MS_REFRESH_TOKEN']
     missing = [name for name in required if not setting(name)]
     if missing:
         raise DigestError('Missing configuration: ' + ', '.join(missing))
@@ -105,17 +112,30 @@ def configuration(dry_run=False):
         if mail_provider == 'graph':
             try:
                 import uuid
-                uuid.UUID(setting('MS_TENANT_ID'))
                 uuid.UUID(setting('MS_CLIENT_ID'))
             except (ValueError, AttributeError):
-                raise DigestError('MS_TENANT_ID and MS_CLIENT_ID must be Entra ID UUIDs') from None
-        if not recipients or any('@' not in s or '\r' in s or '\n' in s for s in [sender, *recipients]):
+                raise DigestError('MS_CLIENT_ID must be an Entra ID UUID') from None
+            if auth_mode == 'application':
+                try:
+                    uuid.UUID(setting('MS_TENANT_ID'))
+                except ValueError:
+                    raise DigestError('MS_TENANT_ID must be an Entra ID UUID') from None
+            else:
+                authority = setting('MS_AUTHORITY', 'consumers')
+                if not re.fullmatch(r'[A-Za-z0-9.-]+', authority):
+                    raise DigestError('MS_AUTHORITY is invalid')
+        addresses = [*recipients]
+        if mail_provider == 'smtp' or auth_mode == 'application':
+            addresses.append(sender)
+        if not recipients or any('@' not in s or '\r' in s or '\n' in s for s in addresses):
             raise DigestError('MAIL_FROM and MAIL_TO must be email addresses without line breaks')
         if any(c in setting('MAIL_SUBJECT') for c in '\r\n'):
             raise DigestError('MAIL_SUBJECT must not contain line breaks')
     prompt = setting('NEWS_PROMPT') or (ROOT / 'prompts/news_prompt.txt').read_text(encoding='utf-8').strip()
     return dict(base=base, style=style, extra=extra, tool=tool, prompt=prompt,
                 mail_provider=mail_provider,
+                auth_mode=setting('MS_AUTH_MODE', 'application').lower(),
+                authority=setting('MS_AUTHORITY', 'consumers'),
                 security=security, recipients=recipients, sender=sender,
                 port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587) if mail_provider == 'smtp' else None,
                 timeout=positive_int('LLM_TIMEOUT', 300),
@@ -326,15 +346,18 @@ def send_email(config, text, rows):
 
 
 def send_graph_email(config, subject, text, markup):
-    tenant = setting('MS_TENANT_ID')
     client_id = setting('MS_CLIENT_ID')
-    client_secret = setting('MS_CLIENT_SECRET')
+    if config['auth_mode'] == 'application':
+        authority = setting('MS_TENANT_ID')
+        form = {'client_id': client_id, 'client_secret': setting('MS_CLIENT_SECRET'),
+                'scope': 'https://graph.microsoft.com/.default', 'grant_type': 'client_credentials'}
+    else:
+        authority = config['authority']
+        form = {'client_id': client_id, 'refresh_token': setting('MS_REFRESH_TOKEN'),
+                'scope': 'https://graph.microsoft.com/Mail.Send offline_access', 'grant_type': 'refresh_token'}
     token_request = Request(
-        f'https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token',
-        data=urlencode({'client_id': client_id, 'client_secret': client_secret,
-                        'scope': 'https://graph.microsoft.com/.default',
-                        'grant_type': 'client_credentials'}).encode(),
-        headers={'Content-Type': 'application/x-www-form-urlencoded'}, method='POST')
+        f'https://login.microsoftonline.com/{authority}/oauth2/v2.0/token',
+        data=urlencode(form).encode(), headers={'Content-Type': 'application/x-www-form-urlencoded'}, method='POST')
     try:
         token_data = json.loads(fetch(token_request, config['timeout']))
         access_token = token_data['access_token']
@@ -353,9 +376,11 @@ def send_graph_email(config, subject, text, markup):
         },
         'saveToSentItems': True,
     }
-    sender = quote(config['sender'], safe='')
+    endpoint = (f'https://graph.microsoft.com/v1.0/users/{quote(config["sender"], safe="")}/sendMail'
+                if config['auth_mode'] == 'application'
+                else 'https://graph.microsoft.com/v1.0/me/sendMail')
     graph_request = Request(
-        f'https://graph.microsoft.com/v1.0/users/{sender}/sendMail',
+        endpoint,
         data=json.dumps(payload, ensure_ascii=False).encode('utf-8'), method='POST',
         headers={'Authorization': 'Bearer ' + access_token, 'Content-Type': 'application/json'})
     try:

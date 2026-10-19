@@ -81,7 +81,22 @@ class DigestTests(unittest.TestCase):
     def test_graph_requires_valid_tenant_and_client_ids(self):
         os.environ.update(MAIL_PROVIDER='graph', MS_TENANT_ID='tenant', MS_CLIENT_ID='client',
                           MS_CLIENT_SECRET='secret', MAIL_FROM='sender@example.com')
-        with self.assertRaisesRegex(app.DigestError, 'UUIDs'):
+        with self.assertRaisesRegex(app.DigestError, 'UUID'):
+            app.configuration()
+
+    def test_personal_graph_configuration_needs_delegated_refresh_token(self):
+        os.environ.update(MAIL_PROVIDER='graph', MS_AUTH_MODE='delegated', MS_AUTHORITY='consumers',
+                          MS_CLIENT_ID='00000000-0000-0000-0000-000000000002',
+                          MS_REFRESH_TOKEN='refresh-token', MAIL_TO='receiver@example.com')
+        for name in ('MS_TENANT_ID', 'MS_CLIENT_SECRET', 'MAIL_FROM', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD'):
+            os.environ.pop(name, None)
+        config = app.configuration()
+        self.assertEqual(config['auth_mode'], 'delegated')
+        self.assertEqual(config['authority'], 'consumers')
+        self.assertEqual(config['sender'], '')
+        self.assertIsNone(config['port'])
+        del os.environ['MS_REFRESH_TOKEN']
+        with self.assertRaisesRegex(app.DigestError, 'MS_REFRESH_TOKEN'):
             app.configuration()
 
     def test_rejects_invalid_or_reserved_extra_parameters(self):
@@ -243,6 +258,29 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(len(payload['message']['toRecipients']), 2)
         self.assertIn('<table ', payload['message']['body']['content'])
         self.assertTrue(payload['saveToSentItems'])
+
+    @patch('news_digest.fetch')
+    def test_personal_graph_refresh_token_uses_me_endpoint_without_client_secret(self, fetch):
+        os.environ.update(MAIL_PROVIDER='graph', MS_AUTH_MODE='delegated', MS_AUTHORITY='consumers',
+                          MS_CLIENT_ID='00000000-0000-0000-0000-000000000002',
+                          MS_REFRESH_TOKEN='long-lived-refresh-token', MAIL_TO='receiver@example.com')
+        for name in ('MS_TENANT_ID', 'MS_CLIENT_SECRET', 'MAIL_FROM', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD'):
+            os.environ.pop(name, None)
+        config = app.configuration()
+        fetch.side_effect = [json.dumps({'access_token': 'delegated-access-token',
+                                         'refresh_token': 'rotated-refresh-token'}).encode(), b'']
+        app.send_email(config, table(), app.parse_report(table(), sources(), []))
+        token_request, mail_request = (call.args[0] for call in fetch.call_args_list)
+        self.assertEqual(token_request.full_url,
+                         'https://login.microsoftonline.com/consumers/oauth2/v2.0/token')
+        token_body = parse_qs(token_request.data.decode())
+        self.assertEqual(token_body['grant_type'], ['refresh_token'])
+        self.assertEqual(token_body['refresh_token'], ['long-lived-refresh-token'])
+        self.assertEqual(token_body['scope'], ['https://graph.microsoft.com/Mail.Send offline_access'])
+        self.assertNotIn('client_secret', token_body)
+        self.assertEqual(mail_request.full_url, 'https://graph.microsoft.com/v1.0/me/sendMail')
+        self.assertEqual(mail_request.get_header('Authorization'), 'Bearer delegated-access-token')
+
 
     @patch('news_digest.fetch')
     def test_graph_errors_do_not_expose_application_credentials(self, fetch):
