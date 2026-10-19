@@ -6,6 +6,8 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 
 默认采用两阶段分批搜集：每个维度先以简短文本调用联网搜索，取得一篇报道的标题、日期、来源和核心事实；再通过不启用搜索的普通模型请求，按完整提示词整理为结构化资料。程序逐条校验并在本地生成五列表格，通常生成 4–7 条资讯，符合 4–8 条的要求。搜索请求只含本维度主题及日期，不携带历史、完整日报提示词或 JSON 排版要求；完整要求和历史排重信息由后续整理阶段处理。无需新增必填环境变量。
 
+联网资料可来自大模型内置搜索（默认 `SEARCH_PROVIDER=llm`），也可来自独立的 Tavily 搜索服务（`SEARCH_PROVIDER=tavily`）。当模型普通问答正常、联网查询持续返回 524 时，可使用独立搜索；此时大模型只做普通文本整理，不再依赖服务商的 `web_search`。
+
 ## 1. 配置模型接口
 
 在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中配置。
@@ -15,6 +17,7 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | 名称 | 用途 |
 | --- | --- |
 | `LLM_API_KEY` | 大模型接口密钥 |
+| `TAVILY_API_KEY` | 仅选择独立 Tavily 搜索时必填；在 Tavily 控制台获取的搜索服务密钥 |
 | `SMTP_USERNAME` | SMTP 登录账号，通常为邮箱地址 |
 | `SMTP_PASSWORD` | 邮箱 SMTP 授权码或应用专用密码 |
 | `MAIL_TO` | 收件邮箱，多个地址用英文逗号分隔 |
@@ -27,10 +30,11 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | 名称 | 默认值 / 说明 |
 | --- | --- |
 | `LLM_API_BASE_URL` | 必填，例如 `https://api.openai.com/v1`；不要填写完整的 `/responses` 或 `/chat/completions` 路径 |
-| `LLM_MODEL` | 必填，必须是服务商支持联网搜索的模型 |
+| `LLM_MODEL` | 必填；使用大模型内置搜索时必须支持联网，使用 Tavily 时只需支持普通文本生成 |
+| `SEARCH_PROVIDER` | 默认 `llm`；设为 `tavily` 使用独立搜索，再由现有大模型整理资料 |
 | `LLM_API_STYLE` | 默认 `responses`；也可设为 `chat_completions` |
 | `LLM_SEARCH_TOOL` | Responses 模式默认 `web_search`；部分兼容服务使用 `web_search_preview` |
-| `LLM_EXTRA_BODY` | 可选，服务商的额外 JSON 参数；Chat Completions 模式必填联网搜索参数 |
+| `LLM_EXTRA_BODY` | 大模型内置搜索的额外 JSON 参数；仅 `SEARCH_PROVIDER=llm` 的 Chat Completions 模式必填联网搜索参数；Tavily 模式不使用该参数 |
 | `LLM_TIMEOUT` | 默认 `300` 秒，单次模型请求超时 |
 | `LLM_BATCH_TIMEOUT` | 可选，分批模式每个搜索任务默认 `90` 秒，实际使用它与 `LLM_TIMEOUT` 的较小值；服务商已返回 524 时，增加此值不能改变服务商的超时限制 |
 | `NEWS_COLLECTION_MODE` | 默认 `batched`，按七个维度分批搜集；`single` 恢复一次生成整份报表的旧流程 |
@@ -44,6 +48,17 @@ GitHub Actions 定时调用大模型的联网搜索能力，按照企业战略�
 | `MS_AUTHORITY` | 委托模式默认 `consumers`，用于个人 Microsoft 账户 |
 | `MS_TENANT_ID` | Microsoft Entra 租户 ID，Graph 应用授权模式必填 |
 | `MS_CLIENT_ID` | Entra 应用（客户端）ID，Graph 模式必填 |
+
+### 使用独立搜索，避开模型服务商的联网接口
+
+1. 在 [Tavily 控制台](https://app.tavily.com/) 注册并获取 API Key，确认账户的可用额度。
+2. 在 GitHub 仓库 **Settings → Secrets and variables → Actions → Secrets** 新增 `TAVILY_API_KEY`。密钥只填到 Secret。
+3. 在 **Variables** 新增 `SEARCH_PROVIDER`，值设为 `tavily`。`NEWS_COLLECTION_MODE` 保持默认 `batched`；若已设置为 `single`，改回 `batched`。
+4. 继续使用现有 `LLM_API_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY`，无需大模型联网权限。到 **Daily news digest → Run workflow** 选择 `main`，勾选 `dry_run` 新建运行。
+
+Tavily 直接返回搜索结果 URL、标题和原文资料，不请求其生成答案。每个维度最多取三篇报道，只有返回原文资料的结果才交给大模型，最终选一篇；程序核对输出标题和 URL 必须与所选结果匹配。单篇正文最多传递前 6000 个字符并标明截取，摘要只能基于提供的原文片段。没有原文资料时会报错，不用搜索摘要冒充原文。日期窗口仍由后续校验限制为今天至前两天。标题与 URL 的匹配不能独立证明所有摘要事实准确。
+
+此模式每次运行最多七次 Tavily 搜索和七次普通模型请求，两家服务分别计费或扣减额度。搜索密钥仅发送到 `api.tavily.com`；大模型密钥仍仅发送到配置的模型接口。无需 RSS，也无需安装额外依赖。未配置新选项时，默认模式仍使用大模型服务商的搜索，持续的 524 不会因新增代码而自动消失。**Test model web search** 专门检查模型的内置搜索；Tavily 模式请通过日报的 `dry_run` 验证。
 
 ### 公司 Microsoft 365 Outlook：Graph OAuth（推荐）
 
