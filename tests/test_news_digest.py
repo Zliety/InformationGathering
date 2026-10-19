@@ -14,6 +14,7 @@ from urllib.request import Request
 import news_digest as app
 
 ENV = {
+    'NEWS_COLLECTION_MODE': 'single',  # Retain regression coverage of the original collection mode.
     'LLM_API_BASE_URL': 'https://model.example/v1',
     'LLM_MODEL': 'search-model', 'LLM_API_KEY': 'test-only-key',
     'SMTP_HOST': 'smtp.example.com', 'SMTP_USERNAME': 'sender@example.com',

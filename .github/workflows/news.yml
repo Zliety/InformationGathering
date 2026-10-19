@@ -30,6 +30,8 @@ jobs:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_EXTRA_BODY: ${{ vars.LLM_EXTRA_BODY }}
       LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
+      LLM_BATCH_TIMEOUT: ${{ vars.LLM_BATCH_TIMEOUT }}
+      NEWS_COLLECTION_MODE: ${{ vars.NEWS_COLLECTION_MODE }}
       NEWS_PROMPT: ${{ vars.NEWS_PROMPT }}
       SMTP_HOST: ${{ vars.SMTP_HOST }}
       SMTP_PORT: ${{ vars.SMTP_PORT }}
