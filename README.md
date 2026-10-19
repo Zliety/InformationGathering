@@ -108,6 +108,12 @@ LLM_EXTRA_BODY={"web_search_options":{}}
 
 `LLM_EXTRA_BODY` 不允许覆盖模型、消息、流式开关或 Responses 工具等核心字段。模型输出会经过格式、来源 URL 和重复检查，但这些检查不能独立证明原文标题、报道日期或每一项摘要事实准确，仍需核对原始报道。
 
+### 单独测试模型接口
+
+如果日报在模型请求阶段失败，可打开 **Actions → Test model API → Run workflow**。这个手动工作流只使用 `LLM_API_BASE_URL`、`LLM_MODEL`、`LLM_API_STYLE` 和 `LLM_API_KEY`，向模型提问“17 加 25 等于多少”，不调用联网搜索、不需要邮箱配置，也不会发邮件。也可以在本地配置相同变量后运行 `python scripts/test_llm_api.py`。
+
+若基础问答也失败，检查接口地址/路径、API 密钥、模型权限、额度，或查看日志中的 HTTP 状态和请求 ID；若基础问答成功而日报仍在搜索阶段失败，说明基础模型接口可用，问题更可能在服务商的联网搜索工具、搜索参数或来源引用格式兼容性。此测试只验证普通模型请求，不代表资讯搜索已经可用。
+
 ## 2. 配置定时与首次运行
 
 默认每天 **北京时间 08:00（UTC 00:00）** 运行。可以修改 [.github/workflows/news.yml](.github/workflows/news.yml) 的 cron。GitHub 调度可能延迟，仅在默认分支运行；公开仓库长期无活动时可能停用定时任务，请确认工作流已启用。
