@@ -149,12 +149,27 @@ class DigestTests(unittest.TestCase):
         examples = [table().replace('序号 (No.)', '序号'), 'Here is the report\n' + table(),
                     table().replace('https://example.com/new/1', 'https://invented.example/1'),
                     table().replace('1. 核心事实<br>2. 原文数据', 'unstructured summary'),
-                    '\n'.join(table().splitlines()[:-1]),
+                    '\n'.join(table().splitlines()[:2]),
                     table().replace('| 2 |', '| 9 |')]
         for text in examples:
             with self.subTest(text=text):
                 with self.assertRaises(app.DigestError):
                     app.parse_report(text, sources(), [])
+
+    def test_one_to_eight_items_are_accepted_but_empty_or_nine_are_rejected(self):
+        header = table().splitlines()[:2]
+        for count in (1, 2, 3, 4, 8):
+            rows = [f'| {n} | 标题{n} | 1. 核心事实<br>2. 原文数据 | 来源 | https://example.com/item/{n} |'
+                    for n in range(1, count + 1)]
+            urls = {f'https://example.com/item/{n}' for n in range(1, count + 1)}
+            with self.subTest(count=count):
+                self.assertEqual(len(app.parse_report('\n'.join(header + rows), urls, [])), count)
+        rows = [f'| {n} | 标题{n} | 1. 核心事实<br>2. 原文数据 | 来源 | https://example.com/item/{n} |'
+                for n in range(1, 10)]
+        for items in ([], rows):
+            with self.assertRaises(app.DigestError):
+                app.parse_report('\n'.join(header + items),
+                                 {f'https://example.com/item/{n}' for n in range(1, 10)}, [])
 
     def test_history_and_current_report_duplicates_are_rejected(self):
         rows = app.parse_report(table(), sources(), [])
