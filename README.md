@@ -62,7 +62,6 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 | 你的发件邮箱 | 推荐方案 | 下方对应章节 |
 | --- | --- | --- |
 | 个人 Outlook / Hotmail | Microsoft Graph 委托授权 | 个人 Outlook |
-| 公司 Microsoft 365 | Microsoft Graph 应用身份，需要管理员协助 | 公司 Microsoft 365 |
 | Gmail / Google Workspace | SMTP + 应用专用密码，需账户允许 | Gmail |
 | 其他支持账号密码认证的邮箱 | SMTP + 邮箱授权码或应用密码 | 通用 SMTP |
 
@@ -103,28 +102,6 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 | 不需要的配置 | `MS_TENANT_ID`、`MS_CLIENT_SECRET`、`MAIL_FROM`、全部 `SMTP_*` |
 | 令牌维护 | 当前程序不会将新刷新令牌写回 GitHub Secrets；授权失效时重新运行脚本并更新 `MS_REFRESH_TOKEN` |
 
-#### 公司 Microsoft 365
-
-由公司管理员配置应用身份发信；此方案不适用于个人 Outlook 邮箱。
-
-| 位置 | 名称 | 必填 | 填写值 / 获取方式 |
-| --- | --- | --- | --- |
-| Variables | `MAIL_PROVIDER` | 是 | `graph` |
-| Variables | `MS_AUTH_MODE` | 是 | `application` |
-| Variables | `MS_TENANT_ID` | 是 | Entra 应用概述的 Directory (tenant) ID / 目录（租户）ID |
-| Variables | `MS_CLIENT_ID` | 是 | Entra 应用概述的 Application (client) ID / 应用程序（客户端）ID |
-| Secrets | `MS_CLIENT_SECRET` | 是 | 应用“证书和密码”中创建的客户端密钥 **Value / 值**，不是 Secret ID |
-| Secrets | `MAIL_FROM` | 是 | 获准使用的公司发件邮箱完整地址 |
-| Secrets | `MAIL_TO` | 是 | 收件邮箱；多个地址用英文逗号分隔 |
-
-| 管理步骤 | 要求 |
-| --- | --- |
-| 注册应用 | 在公司所属 Entra 租户中注册应用 |
-| 创建客户端密钥 | 立即保存密钥值，并记录到期时间；到期前更新 GitHub Secret |
-| 授予发信权限 | Microsoft Graph → **Application permissions → Mail.Send**，完成管理员同意 |
-| 限制邮箱访问 | 由管理员限制应用可使用的发件邮箱范围，并确认 `MAIL_FROM` 在范围内 |
-| 无需配置 | `MS_REFRESH_TOKEN`、`MS_AUTHORITY`、全部 `SMTP_*`；不运行个人 Outlook 授权脚本 |
-
 #### Gmail / Google Workspace
 
 | 准备步骤 | 操作 |
@@ -160,7 +137,7 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 | 限制 | 说明 |
 | --- | --- |
-| 公司 Outlook SMTP | 当前 SMTP 实现使用账号密码认证；公司可能禁用此方式，仅开启 SMTP AUTH 也不保证可用，建议使用上方 Graph 方案 |
+| SMTP 认证要求 | 当前 SMTP 实现使用账号密码认证；请确认服务商允许使用授权码或应用专用密码登录 |
 | 切换发信方式 | 必须同步修改 `MAIL_PROVIDER`；Graph 模式忽略 SMTP 凭据，SMTP 模式忽略 `MS_*` 配置 |
 
 #### 通用选项与运行确认
