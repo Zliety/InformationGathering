@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from http.client import HTTPException
+from io import BytesIO
 import ipaddress
 import json
 from pathlib import Path
@@ -15,6 +16,7 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_ope
 
 from lxml import html, etree
 import trafilatura
+from pypdf import PdfReader
 
 BEIJING = timezone(timedelta(hours=8))
 MAX_PAGE_BYTES = 3 * 1024 * 1024
@@ -74,22 +76,23 @@ class SourceRedirectHandler(HTTPRedirectHandler):
         return super().redirect_request(request, response, code, message, headers, new_url)
 
 
-def fetch_public(url, domains, timeout):
+def fetch_public(url, domains, timeout, form=None):
     checked_url(url, domains)
-    request = Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; InformationGathering/2.0)',
-                                    'Accept': 'text/html,application/json;q=0.9,*/*;q=0.5'})
+    request = Request(url, data=urlencode(form).encode() if form is not None else None, headers={'User-Agent': 'Mozilla/5.0 (compatible; InformationGathering/2.0)',
+                                    'Accept': 'text/html,application/json,application/pdf;q=0.9,*/*;q=0.5'})
     opener = build_opener(SourceRedirectHandler(domains), HTTPSHandler(context=ssl.create_default_context()))
     try:
         with opener.open(request, timeout=timeout) as response:
             final_url = checked_url(response.geturl(), domains)
-            data = response.read(MAX_PAGE_BYTES + 1)
+            limit = 8 * 1024 * 1024 if urlsplit(final_url).path.lower().endswith('.pdf') else MAX_PAGE_BYTES
+            data = response.read(limit + 1)
     except HTTPError as exc:
         code = exc.code
         exc.close()
         raise SourceError(f'Source returned HTTP {code}') from None
     except (URLError, TimeoutError, OSError, HTTPException):
         raise SourceError('Source network, TLS, or timeout failure') from None
-    if len(data) > MAX_PAGE_BYTES:
+    if len(data) > limit:
         raise SourceError('Source page exceeds the size limit')
     return data, final_url
 
@@ -123,12 +126,12 @@ def load_sources(path):
             raise ValueError
         data = json.loads(Path(path).read_text(encoding='utf-8'))
         sources = data['sources']
-        if data.get('version') != 1 or not isinstance(sources, list) or not 1 <= len(sources) <= 20:
+        if data.get('version') != 1 or not isinstance(sources, list) or not 1 <= len(sources) <= 40:
             raise ValueError
         ids = set()
         for source in sources:
             if (not isinstance(source, dict) or not re.fullmatch(r'[A-Za-z0-9_-]{1,40}', source.get('id', ''))
-                    or source['id'] in ids or source.get('type') not in ('html', 'newsnow')
+                    or source['id'] in ids or source.get('type') not in ('html', 'newsnow', 'cninfo')
                     or not isinstance(source.get('name'), str) or not source['name'].strip()
                     or any(c in source['name'] for c in '\r\n|')):
                 raise ValueError
@@ -139,6 +142,9 @@ def load_sources(path):
             if source['type'] == 'html':
                 checked_url(source['url'], domains)
                 re.compile(source['link_pattern'])
+            elif source['type'] == 'cninfo':
+                if domains != ['cninfo.com.cn'] or not re.fullmatch(r'\d{6}', source.get('security_code', '')):
+                    raise ValueError
             elif not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', source.get('platform', '')):
                 raise ValueError
             ids.add(source['id'])
@@ -147,8 +153,35 @@ def load_sources(path):
         raise SourceError('News source configuration is missing or invalid') from None
 
 
-def discover(source, settings):
-    if source['type'] == 'newsnow':
+def discover(source, settings, today=None):
+    if source['type'] == 'cninfo':
+        today = today or datetime.now(BEIJING).date()
+        form = dict(pageNum='1', pageSize='30', column='szse', tabName='fulltext',
+                    plate='', stock='', searchkey=source['security_code'], secid='', category='',
+                    trade='', seDate=f'{today - timedelta(days=2)}~{today}',
+                    sortName='time', sortType='desc', isHLtitle='false')
+        data, _ = fetch_public('https://www.cninfo.com.cn/new/hisAnnouncement/query',
+                               source['allowed_domains'], settings['source_timeout'], form=form)
+        try:
+            result = json.loads(data)
+            items = result['announcements']
+            if items is None and result.get('totalAnnouncement') == 0:
+                items = []
+            if not isinstance(items, list):
+                raise ValueError
+            entries = []
+            for item in items:
+                if not isinstance(item, dict) or item.get('secCode') != source['security_code']:
+                    continue
+                title = item.get('announcementTitle')
+                adjunct = item.get('adjunctUrl')
+                if not isinstance(title, str) or not isinstance(adjunct, str) or not adjunct.lower().endswith('.pdf'):
+                    continue
+                title = html.fragment_fromstring(title, create_parent=True).text_content()
+                entries.append((title, urljoin('https://static.cninfo.com.cn/', adjunct), item.get('announcementTime')))
+        except (ValueError, KeyError, TypeError, etree.LxmlError):
+            raise SourceError('CNINFO returned an invalid announcement response') from None
+    elif source['type'] == 'newsnow':
         base = settings['newsnow_api_url']
         host = urlsplit(base).hostname
         data, _ = fetch_public(base + '?' + urlencode({'id': source['platform']}), [host], settings['source_timeout'])
@@ -217,11 +250,40 @@ def rank_candidates(candidates, extra_keywords=()):
             used.add(canonical_url(best['url']))
     remaining = sorted(candidates, key=lambda item: sum(matches(item, words) for _, words in TOPICS)
                        + 3 * matches(item, extra_keywords), reverse=True)
+    # Give each source with relevant news a turn before taking more from the same feed.
+    covered = {item['source']['id'] for item in ranked}
+    for item in remaining:
+        key = canonical_url(item['url'])
+        relevant = any(matches(item, words) for _, words in TOPICS) or matches(item, extra_keywords)
+        if key not in used and item['source']['id'] not in covered and relevant:
+            ranked.append(item)
+            used.add(key)
+            covered.add(item['source']['id'])
     ranked.extend(item for item in remaining if canonical_url(item['url']) not in used)
     return ranked
 
 
 def extract_document(data, url, candidate, today):
+    if candidate['source']['type'] == 'cninfo':
+        if not data.startswith(b'%PDF-'):
+            raise SourceError('Announcement did not return a PDF')
+        try:
+            reader = PdfReader(BytesIO(data))
+            if reader.is_encrypted:
+                raise ValueError
+            text = '\n'.join(page.extract_text() or '' for page in reader.pages[:12])
+            if len(text.strip()) < 120:
+                raise ValueError
+        except Exception:
+            raise SourceError('Announcement PDF has no usable text or could not be parsed') from None
+        published = candidate['published_date']
+        if not published:
+            raise SourceError('Announcement publication date is unavailable')
+        if not today - timedelta(days=2) <= published <= today:
+            return None
+        return dict(title=candidate['title'], url=canonical_url(url), source=candidate['source']['name'],
+                    published_date=str(published), text=text[:8000],
+                    text_truncated=len(text) > 8000 or len(reader.pages) > 12)
     try:
         document = trafilatura.bare_extraction(data, url=url, with_metadata=True,
                                               include_comments=False, include_tables=True,
@@ -250,7 +312,7 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
     success = 0
     def get_source(source):
         try:
-            return discover(source, settings), None
+            return discover(source, settings, today), None
         except SourceError as exc:
             return [], f'Source {source["id"]}: {exc}'
     with ThreadPoolExecutor(max_workers=4) as pool:

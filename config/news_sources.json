@@ -1,12 +1,318 @@
 {
   "version": 1,
   "sources": [
-    {"id": "stats", "name": "国家统计局", "type": "html", "url": "https://www.stats.gov.cn/sj/zxfb/", "allowed_domains": ["stats.gov.cn"], "link_pattern": "/sj/zxfb/\\d{6}/t\\d{8}_\\d+\\.html"},
-    {"id": "mohrss", "name": "人力资源和社会保障部", "type": "html", "url": "https://www.mohrss.gov.cn/SYrlzyhshbzb/dongtaixinwen/buneiyaowen/", "allowed_domains": ["mohrss.gov.cn"], "link_pattern": "/dongtaixinwen/.+\\.(?:html|shtml)"},
-    {"id": "gov", "name": "中国政府网", "type": "html", "url": "https://www.gov.cn/yaowen/liebiao/", "allowed_domains": ["gov.cn"], "link_pattern": "/(?:yaowen|zhengce)/.+content_\\d+\\.htm"},
-    {"id": "cls", "name": "财联社", "type": "newsnow", "platform": "cls-telegraph", "allowed_domains": ["cls.cn"]},
-    {"id": "ithome", "name": "IT之家", "type": "newsnow", "platform": "ithome", "allowed_domains": ["ithome.com"]},
-    {"id": "wallstreetcn", "name": "华尔街见闻", "type": "newsnow", "platform": "wallstreetcn-news", "allowed_domains": ["wallstreetcn.com", "wallstcn.com"]},
-    {"id": "36kr", "name": "36氪", "type": "newsnow", "platform": "36kr-quick", "allowed_domains": ["36kr.com"]}
+    {
+      "id": "stats",
+      "name": "国家统计局",
+      "type": "html",
+      "url": "https://www.stats.gov.cn/sj/zxfb/",
+      "allowed_domains": [
+        "stats.gov.cn"
+      ],
+      "link_pattern": "/sj/zxfb/\\d{6}/t\\d{8}_\\d+\\.html"
+    },
+    {
+      "id": "mohrss",
+      "name": "人力资源和社会保障部",
+      "type": "html",
+      "url": "https://www.mohrss.gov.cn/SYrlzyhshbzb/dongtaixinwen/buneiyaowen/",
+      "allowed_domains": [
+        "mohrss.gov.cn"
+      ],
+      "link_pattern": "/dongtaixinwen/.+\\.(?:html|shtml)"
+    },
+    {
+      "id": "gov",
+      "name": "中国政府网",
+      "type": "html",
+      "url": "https://www.gov.cn/yaowen/liebiao/",
+      "allowed_domains": [
+        "gov.cn"
+      ],
+      "link_pattern": "/(?:yaowen|zhengce)/.+content_\\d+\\.htm"
+    },
+    {
+      "id": "cls",
+      "name": "财联社",
+      "type": "newsnow",
+      "platform": "cls-telegraph",
+      "allowed_domains": [
+        "cls.cn"
+      ]
+    },
+    {
+      "id": "ithome",
+      "name": "IT之家",
+      "type": "newsnow",
+      "platform": "ithome",
+      "allowed_domains": [
+        "ithome.com"
+      ]
+    },
+    {
+      "id": "wallstreetcn",
+      "name": "华尔街见闻",
+      "type": "newsnow",
+      "platform": "wallstreetcn-news",
+      "allowed_domains": [
+        "wallstreetcn.com",
+        "wallstcn.com"
+      ]
+    },
+    {
+      "id": "36kr",
+      "name": "36氪",
+      "type": "newsnow",
+      "platform": "36kr-quick",
+      "allowed_domains": [
+        "36kr.com"
+      ]
+    },
+    {
+      "id": "sina",
+      "name": "新浪财经",
+      "type": "html",
+      "url": "https://finance.sina.com.cn/roll/",
+      "allowed_domains": [
+        "finance.sina.com.cn"
+      ],
+      "link_pattern": "/.*\\d{4}-\\d{2}-\\d{2}/doc-[^/]+\\.shtml"
+    },
+    {
+      "id": "eastmoney",
+      "name": "东方财富",
+      "type": "html",
+      "url": "https://finance.eastmoney.com/a/cywjh.html",
+      "allowed_domains": [
+        "finance.eastmoney.com"
+      ],
+      "link_pattern": "/a/\\d+\\.html"
+    },
+    {
+      "id": "nbd",
+      "name": "每日经济新闻",
+      "type": "html",
+      "url": "https://www.nbd.com.cn/",
+      "allowed_domains": [
+        "www.nbd.com.cn"
+      ],
+      "link_pattern": "/articles/\\d{4}-\\d{2}-\\d{2}/\\d+\\.html"
+    },
+    {
+      "id": "byd",
+      "name": "比亚迪（巨潮资讯公告）",
+      "type": "cninfo",
+      "security_code": "002594",
+      "allowed_domains": [
+        "cninfo.com.cn"
+      ]
+    },
+    {
+      "id": "luxshare",
+      "name": "立讯精密（巨潮资讯公告）",
+      "type": "cninfo",
+      "security_code": "002475",
+      "allowed_domains": [
+        "cninfo.com.cn"
+      ]
+    },
+    {
+      "id": "lens",
+      "name": "蓝思科技（巨潮资讯公告）",
+      "type": "cninfo",
+      "security_code": "300433",
+      "allowed_domains": [
+        "cninfo.com.cn"
+      ]
+    },
+    {
+      "id": "goertek",
+      "name": "歌尔股份（巨潮资讯公告）",
+      "type": "cninfo",
+      "security_code": "002241",
+      "allowed_domains": [
+        "cninfo.com.cn"
+      ]
+    },
+    {
+      "id": "shenzhen_gov",
+      "name": "深圳人民政府",
+      "type": "html",
+      "url": "https://www.sz.gov.cn/",
+      "allowed_domains": [
+        "www.sz.gov.cn"
+      ],
+      "link_pattern": "/content/post_\\d+\\.html"
+    },
+    {
+      "id": "shenzhen_hrss",
+      "name": "深圳人力资源和社会保障部门",
+      "type": "html",
+      "url": "https://hrss.sz.gov.cn/",
+      "allowed_domains": [
+        "hrss.sz.gov.cn"
+      ],
+      "link_pattern": "/content/post_\\d+\\.html"
+    },
+    {
+      "id": "shenzhen_stats",
+      "name": "深圳统计局",
+      "type": "html",
+      "url": "https://tjj.sz.gov.cn/",
+      "allowed_domains": [
+        "tjj.sz.gov.cn"
+      ],
+      "link_pattern": "/content/post_\\d+\\.html"
+    },
+    {
+      "id": "zhengzhou_gov",
+      "name": "郑州人民政府",
+      "type": "html",
+      "url": "https://www.zhengzhou.gov.cn/",
+      "allowed_domains": [
+        "www.zhengzhou.gov.cn"
+      ],
+      "link_pattern": "/.+/\\d+\\.jhtml"
+    },
+    {
+      "id": "zhengzhou_hrss",
+      "name": "郑州人力资源和社会保障部门",
+      "type": "html",
+      "url": "https://zzrs.zhengzhou.gov.cn/",
+      "allowed_domains": [
+        "zzrs.zhengzhou.gov.cn"
+      ],
+      "link_pattern": "/.+/\\d+\\.jhtml"
+    },
+    {
+      "id": "zhengzhou_stats",
+      "name": "郑州统计局",
+      "type": "html",
+      "url": "https://tjj.zhengzhou.gov.cn/",
+      "allowed_domains": [
+        "tjj.zhengzhou.gov.cn"
+      ],
+      "link_pattern": "/.+/\\d+\\.jhtml"
+    },
+    {
+      "id": "chengdu_gov",
+      "name": "成都人民政府",
+      "type": "html",
+      "url": "https://www.chengdu.gov.cn/",
+      "allowed_domains": [
+        "www.chengdu.gov.cn"
+      ],
+      "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    },
+    {
+      "id": "chengdu_hrss",
+      "name": "成都人力资源和社会保障部门",
+      "type": "html",
+      "url": "https://cdhrss.chengdu.gov.cn/",
+      "allowed_domains": [
+        "cdhrss.chengdu.gov.cn"
+      ],
+      "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    },
+    {
+      "id": "chengdu_stats",
+      "name": "成都统计局",
+      "type": "html",
+      "url": "https://cdstats.chengdu.gov.cn/",
+      "allowed_domains": [
+        "cdstats.chengdu.gov.cn"
+      ],
+      "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    },
+    {
+      "id": "guangdong_gov",
+      "name": "广东省人民政府",
+      "type": "html",
+      "url": "https://www.gd.gov.cn/",
+      "allowed_domains": [
+        "www.gd.gov.cn"
+      ],
+      "link_pattern": "/content/post_\\d+\\.html"
+    },
+    {
+      "id": "guangdong_hrss",
+      "name": "广东省人力资源和社会保障部门",
+      "type": "html",
+      "url": "https://hrss.gd.gov.cn/",
+      "allowed_domains": [
+        "hrss.gd.gov.cn"
+      ],
+      "link_pattern": "/content/post_\\d+\\.html"
+    },
+    {
+      "id": "guangdong_stats",
+      "name": "广东省统计局",
+      "type": "html",
+      "url": "https://stats.gd.gov.cn/",
+      "allowed_domains": [
+        "stats.gd.gov.cn"
+      ],
+      "link_pattern": "/content/post_\\d+\\.html"
+    },
+    {
+      "id": "henan_gov",
+      "name": "河南省人民政府",
+      "type": "html",
+      "url": "https://www.henan.gov.cn/",
+      "allowed_domains": [
+        "www.henan.gov.cn"
+      ],
+      "link_pattern": "/(?:\\d{4}/\\d{2}-\\d{2}/\\d+|[^?#]+/\\d+)\\.html"
+    },
+    {
+      "id": "henan_hrss",
+      "name": "河南省人力资源和社会保障部门",
+      "type": "html",
+      "url": "https://hrss.henan.gov.cn/",
+      "allowed_domains": [
+        "hrss.henan.gov.cn"
+      ],
+      "link_pattern": "/(?:\\d{4}/\\d{2}-\\d{2}/\\d+|[^?#]+/\\d+)\\.html"
+    },
+    {
+      "id": "henan_stats",
+      "name": "河南省统计局",
+      "type": "html",
+      "url": "https://tjj.henan.gov.cn/",
+      "allowed_domains": [
+        "tjj.henan.gov.cn"
+      ],
+      "link_pattern": "/(?:\\d{4}/\\d{2}-\\d{2}/\\d+|[^?#]+/\\d+)\\.html"
+    },
+    {
+      "id": "sichuan_gov",
+      "name": "四川省人民政府",
+      "type": "html",
+      "url": "https://www.sc.gov.cn/",
+      "allowed_domains": [
+        "www.sc.gov.cn"
+      ],
+      "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    },
+    {
+      "id": "sichuan_hrss",
+      "name": "四川省人力资源和社会保障部门",
+      "type": "html",
+      "url": "https://rst.sc.gov.cn/",
+      "allowed_domains": [
+        "rst.sc.gov.cn"
+      ],
+      "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    },
+    {
+      "id": "sichuan_stats",
+      "name": "四川省统计局",
+      "type": "html",
+      "url": "https://tjj.sc.gov.cn/",
+      "allowed_domains": [
+        "tjj.sc.gov.cn"
+      ],
+      "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    }
   ]
 }

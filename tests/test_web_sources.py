@@ -99,5 +99,47 @@ class WebSourceTests(unittest.TestCase):
                 web.load_sources(path)
 
 
+class ExpandedSourceTests(unittest.TestCase):
+    def test_manifest_has_three_provinces_and_three_cities(self):
+        sources = web.load_sources(Path(__file__).resolve().parents[1] / 'config/news_sources.json')
+        self.assertEqual(len(sources), 32)
+        ids = {source['id'] for source in sources}
+        for area in ('guangdong', 'henan', 'sichuan', 'shenzhen', 'zhengzhou', 'chengdu'):
+            for agency in ('gov', 'hrss', 'stats'):
+                self.assertIn(area + '_' + agency, ids)
+
+    def test_cninfo_filters_issuer_and_preserves_original_title_url_and_date(self):
+        source = dict(id='byd', name='比亚迪（巨潮资讯公告）', type='cninfo',
+                      security_code='002594', allowed_domains=['cninfo.com.cn'])
+        item = dict(secCode='002594', announcementTitle='<em>比亚迪</em>：投资公告',
+                    announcementTime='2026-10-19', adjunctUrl='finalpage/2026-10-19/123.PDF')
+        payload = {'announcements': [item, {**item, 'secCode': '002475'},
+                                      {**item, 'adjunctUrl': 'https://evil.test/fake.pdf'}]}
+        with patch('web_sources.fetch_public', return_value=(json.dumps(payload).encode(), 'unused')) as fetch:
+            items = web.discover(source, {'source_timeout': 15}, TODAY)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['title'], '比亚迪：投资公告')
+        self.assertEqual(items[0]['url'], 'https://static.cninfo.com.cn/finalpage/2026-10-19/123.PDF')
+        self.assertEqual(items[0]['published_date'], TODAY)
+        self.assertEqual(fetch.call_args.kwargs['form']['seDate'], '2026-10-17~2026-10-19')
+
+    def test_pdf_uses_disclosure_date_and_bounds_text_extraction(self):
+        from unittest.mock import MagicMock
+        source = {**SOURCE, 'type': 'cninfo'}
+        item = {**candidate(), 'source': source, 'title': '原始公告标题'}
+        reader = MagicMock(is_encrypted=False)
+        page = MagicMock()
+        page.extract_text.return_value = 'Original announcement evidence. ' * 20
+        reader.pages = [page] * 14
+        with patch('web_sources.PdfReader', return_value=reader):
+            document = web.extract_document(b'%PDF-1.7', 'https://example.com/a.pdf', item, TODAY)
+        self.assertEqual(document['title'], item['title'])
+        self.assertEqual(document['published_date'], str(TODAY))
+        self.assertTrue(document['text_truncated'])
+        self.assertEqual(page.extract_text.call_count, 12)
+        with self.assertRaises(web.SourceError):
+            web.extract_document(b'<html>access denied</html>', item['url'], item, TODAY)
+
+
 if __name__ == '__main__':
     unittest.main()
