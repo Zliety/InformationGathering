@@ -364,6 +364,8 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
                 success += 1
                 print(f'Source {source["id"]}: {len(items)} candidate links', flush=True)
                 candidates.extend(items)
+    stats = settings.get('collection_stats', {})
+    stats['candidate_links'] = len(candidates)
     if not success:
         raise SourceError('All configured news sources failed; check source access and configuration')
     def title_key(value):
@@ -402,6 +404,7 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
             message = f'Article from {item["source"]["id"]}: {exc}'
             problems.append(message)
             print(message, flush=True)
+    stats.update(article_attempts=attempted, outside_window=stale, article_duplicates=duplicates)
     print(f'Article attempts: {attempted}; outside date window: {stale}; duplicates: {duplicates}', flush=True)
     print(f'Fetched {len(documents)} original articles; {len(problems)} source/article failures', flush=True)
     return documents, problems

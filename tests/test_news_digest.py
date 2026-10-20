@@ -340,7 +340,7 @@ class DigestTests(unittest.TestCase):
 
     @patch('news_digest.send_email')
     @patch('news_digest.fetch')
-    def test_no_news_succeeds_without_sending_saving_or_uploading_history(self, fetch, send):
+    def test_no_news_sends_notification_without_saving_or_uploading_history(self, fetch, send):
         output_path = self.path.parent / 'github-output'
         os.environ['GITHUB_OUTPUT'] = str(output_path)
         result = response()
@@ -348,7 +348,10 @@ class DigestTests(unittest.TestCase):
         fetch.return_value = json.dumps(result).encode()
         with redirect_stdout(io.StringIO()):
             self.assertEqual(app.main([]), 0)
-        send.assert_not_called()
+        send.assert_called_once()
+        self.assertTrue(send.call_args.kwargs['notification'])
+        self.assertIn('本次无符合条件的新资讯', send.call_args.args[1])
+        self.assertIn('合格资讯：0', send.call_args.args[1])
         self.assertFalse(self.path.exists())
         self.assertFalse(output_path.exists())
 

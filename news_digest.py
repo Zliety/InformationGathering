@@ -295,12 +295,17 @@ def summarize_article(config, document, excluded):
                'NO_NEWS:DUPLICATE': 'duplicates an already selected or historical event',
                'NO_NEWS:INSUFFICIENT': 'insufficient original facts'}
     if response in reasons:
+        stats = config.get('collection_stats', {})
+        stats['summary_skipped'] = stats.get('summary_skipped', 0) + 1
+        reason = response.partition(':')[2] or 'UNSPECIFIED'
+        stats[reason] = stats.get(reason, 0) + 1
         print('Summary skipped: ' + reasons[response], flush=True)
         return None
     return summary_points(response, document['text'])
 
 
 def collect_report(config, history):
+    config['collection_stats'] = stats = {'summary_attempts': 0, 'summary_skipped': 0}
     today = datetime.now(BEIJING).date()
     excluded = [article for report in history for article in report['articles']]
     seen_urls = {canonical_url(article['url']) for article in excluded}
@@ -309,8 +314,9 @@ def collect_report(config, history):
         documents, problems = web_sources.collect_documents(config, today, seen_urls, seen_titles)
     except web_sources.SourceError as exc:
         raise DigestError(str(exc)) from None
+    stats.update(original_articles=len(documents), collection_failures=len(problems))
     if not documents:
-        print('No eligible original articles; skipping email', flush=True)
+        print('No eligible original articles; preparing notification', flush=True)
         return 'NO_NEWS', set()
     rows, evidence = [], set()
     failures = 0
@@ -320,6 +326,7 @@ def collect_report(config, history):
         if key in seen_urls or title in seen_titles:
             continue
         print(f'Summarizing original article {index}/{min(len(documents), config["max_model_calls"])}', flush=True)
+        stats['summary_attempts'] += 1
         try:
             points = summarize_article(task_config, document, excluded)
             if points is None:
@@ -343,6 +350,7 @@ def collect_report(config, history):
         except (URLError, TimeoutError, OSError):
             failures += 1
             print(f'Article {index} summary failed: network or timeout error', flush=True)
+    stats.update(accepted=len(rows), model_failures=failures)
     print(f'Validated {len(rows)} summaries; {failures} model failures', flush=True)
     if not rows:
         if failures:
@@ -432,10 +440,15 @@ def html_table(rows):
             '<thead>' + head + '</thead><tbody>' + ''.join(body) + '</tbody></table></body></html>')
 
 
-def send_email(config, text, rows):
+def send_email(config, text, rows, notification=False):
     now = datetime.now(BEIJING)
     subject = setting('MAIL_SUBJECT', '企业战略与人力资源资讯简报') + ' · ' + now.strftime('%Y-%m-%d')
-    markup = html_table(rows)
+    if notification:
+        subject = '本次无符合条件的新资讯 · ' + now.strftime('%Y-%m-%d')
+        markup = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body>' + ''.join(
+            '<p>' + html.escape(line) + '</p>' for line in text.splitlines() if line) + '</body></html>'
+    else:
+        markup = html_table(rows)
     if config['mail_provider'] == 'graph':
         send_graph_email(config, subject, text, markup)
         return
@@ -548,7 +561,22 @@ def main(argv=None):
         phase = 'website collection and summarization'
         text, sources = collect_report(config, history)
         if text == 'NO_NEWS':
-            print('No eligible new news; email and report history unchanged')
+            stats = config.get('collection_stats', {})
+            labels = [('candidate_links', '来源返回候选链接'), ('article_attempts', '尝试下载原文'),
+                      ('outside_window', '原文超出日期范围'), ('article_duplicates', '原文重复'),
+                      ('original_articles', '可用原文'), ('collection_failures', '来源或原文采集错误'),
+                      ('summary_attempts', '参与摘要筛选'), ('IRRELEVANT', '选题不相关'),
+                      ('DUPLICATE', '与历史或已选事件重复'), ('INSUFFICIENT', '原文事实不足'),
+                      ('UNSPECIFIED', '其他未符合条件'), ('accepted', '合格资讯')]
+            notice = '本次无符合条件的新资讯\n\n' + '\n'.join(
+                f'{label}：{stats.get(key, 0)}' for key, label in labels)
+            notice += '\n\n以上为本次运行统计；来源访问受限或处理数量上限可能影响覆盖范围。'
+            if args.dry_run:
+                print('Dry run: notification preview (email and history unchanged)\n' + notice)
+            else:
+                phase = 'no-news notification delivery'
+                send_email(config, notice, [], notification=True)
+                print('Mail service accepted the no-news notification; report history unchanged')
             return 0
         phase = 'report validation'
         rows = parse_report(text, sources, history)
