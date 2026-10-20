@@ -55,43 +55,135 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 来源全部不可访问时会失败，不会将访问失败当作“没有新闻”。部分来源或摘要失败时，只要有至少一条合格资讯就会生成报表并发信。没有合格资讯时发送统计通知；若无合格摘要且发生模型处理错误，则报错。401/403/404 模型错误会立即停止，不会自动重试模型或发信请求。
 
-### 邮件：个人 Outlook / Hotmail
+### 邮件配置：先选择发信方式
 
-继续使用现有 Microsoft Graph 委托授权配置：
+所有邮件变量都配置在 **GitHub 仓库 → Settings → Secrets and variables → Actions**，不是 Codex 环境设置。名称和值分开填写，值不加引号；只需配置所选方案。
 
-| 位置 | 名称 | 值或用途 |
+| 你的发件邮箱 | 推荐方案 | 下方对应章节 |
 | --- | --- | --- |
-| Variables | `MAIL_PROVIDER` | `graph` |
-| Variables | `MS_AUTH_MODE` | `delegated` |
-| Variables | `MS_AUTHORITY` | `consumers` |
-| Variables | `MS_CLIENT_ID` | Entra 应用的 **Application (client) ID** |
-| Secrets | `MS_REFRESH_TOKEN` | 设备授权获得的刷新令牌 |
-| Secrets | `MAIL_TO` | 收件邮箱，多个地址用英文逗号分隔 |
+| 个人 Outlook / Hotmail | Microsoft Graph 委托授权 | 个人 Outlook |
+| 公司 Microsoft 365 | Microsoft Graph 应用身份，需要管理员协助 | 公司 Microsoft 365 |
+| Gmail / Google Workspace | SMTP + 应用专用密码，需账户允许 | Gmail |
+| 其他支持账号密码认证的邮箱 | SMTP + 邮箱授权码或应用密码 | 通用 SMTP |
 
-如果尚未授权：在 Entra 注册支持个人 Microsoft 账户的应用，启用 **Allow public client flows**，添加 Microsoft Graph **Delegated → Mail.Send**。在本地运行：
+| 配置位置 | 添加入口 | 存放内容 |
+| --- | --- | --- |
+| **Variables** 标签 | New repository variable | 普通选项、服务器地址、应用 ID |
+| **Secrets** 标签 | New repository secret | 密码、令牌、客户端密钥，以及本项目读取的邮箱地址 |
 
-```bash
-MS_CLIENT_ID='<你的应用 Client ID>' python3 scripts/authorize_outlook.py
-```
+#### 个人 Outlook / Hotmail
 
-根据提示登录个人邮箱，将输出的刷新令牌直接保存到 GitHub Secret `MS_REFRESH_TOKEN`，不要提交到仓库或分享。个人委托模式的发件人就是完成授权的邮箱，不需要 SMTP 配置、客户端密钥或租户 ID。刷新令牌失效时重新授权并更新 Secret。
+| 位置 | 名称 | 必填 | 填写值 / 获取方式 |
+| --- | --- | --- | --- |
+| Variables | `MAIL_PROVIDER` | 是 | `graph` |
+| Variables | `MS_AUTH_MODE` | 是 | `delegated` |
+| Variables | `MS_AUTHORITY` | 是 | `consumers`，用于个人 Microsoft 账户 |
+| Variables | `MS_CLIENT_ID` | 是 | 应用概述中的 **Application (client) ID / 应用程序（客户端）ID**，不是租户 ID |
+| Secrets | `MS_REFRESH_TOKEN` | 是 | 通过下方授权脚本获取的完整刷新令牌 |
+| Secrets | `MAIL_TO` | 是 | 收件邮箱；多个地址用英文逗号分隔 |
 
-### 邮件：公司 Microsoft 365
+| 步骤 | 操作 | 注意事项 |
+| --- | --- | --- |
+| 1 | 在 [Microsoft Entra](https://entra.microsoft.com/) 的“应用注册”中新增应用 | 支持的账户类型必须包含个人 Microsoft 账户；设备代码流程不需要填写重定向 URI |
+| 2 | 从应用“概述”复制 Application (client) ID | 保存到 Variables 的 `MS_CLIENT_ID` |
+| 3 | 在“身份验证”中启用 **Allow public client flows / 允许公共客户端流** | 修改后保存 |
+| 4 | 在“API 权限”添加 **Microsoft Graph → Delegated permissions → Mail.Send** | 选择委托权限；脚本另外请求 `offline_access` 获取刷新令牌 |
+| 5 | 下载项目，在项目目录的本地终端运行下方命令 | 需要 Python；授权脚本无需安装采集依赖 |
+| 6 | 打开脚本提示的微软登录地址，输入设备代码并同意授权 | 登录哪个邮箱，就由哪个邮箱发信 |
+| 7 | 将终端输出的刷新令牌保存到 Secret `MS_REFRESH_TOKEN` | 不要提交到代码、截图公开或发给他人 |
 
-由公司管理员配置 Microsoft Graph 应用身份发信：
+| 本地系统 | 授权命令（替换 Client ID 后运行） |
+| --- | --- |
+| Windows PowerShell | `$env:MS_CLIENT_ID="你的Client ID"`，然后运行 `python scripts/authorize_outlook.py`；若无 python 命令可使用 `py` |
+| macOS / Linux | `MS_CLIENT_ID='你的Client ID' python3 scripts/authorize_outlook.py` |
 
-- Variables：`MAIL_PROVIDER=graph`、`MS_AUTH_MODE=application`、`MS_TENANT_ID`、`MS_CLIENT_ID`。
-- Secrets：`MS_CLIENT_SECRET`、`MAIL_FROM`、`MAIL_TO`。
-- 应用需取得 Microsoft Graph **Application → Mail.Send** 的管理员同意，并限制到允许发送的邮箱范围。
+| 项目 | 说明 |
+| --- | --- |
+| 发件人 | 完成授权的个人 Outlook 邮箱；可以发送给自己 |
+| 不需要的配置 | `MS_TENANT_ID`、`MS_CLIENT_SECRET`、`MAIL_FROM`、全部 `SMTP_*` |
+| 令牌维护 | 当前程序不会将新刷新令牌写回 GitHub Secrets；授权失效时重新运行脚本并更新 `MS_REFRESH_TOKEN` |
 
-### 邮件：SMTP
+#### 公司 Microsoft 365
 
-默认 `MAIL_PROVIDER=smtp`，需设置：
+由公司管理员配置应用身份发信；此方案不适用于个人 Outlook 邮箱。
 
-- Variables：`SMTP_HOST`；可选 `SMTP_SECURITY=ssl`（默认端口 465）或 `starttls`（默认端口 587）、`SMTP_PORT`。
-- Secrets：`SMTP_USERNAME`、`SMTP_PASSWORD`、`MAIL_TO`；可选 `MAIL_FROM`，默认使用 `SMTP_USERNAME`。
+| 位置 | 名称 | 必填 | 填写值 / 获取方式 |
+| --- | --- | --- | --- |
+| Variables | `MAIL_PROVIDER` | 是 | `graph` |
+| Variables | `MS_AUTH_MODE` | 是 | `application` |
+| Variables | `MS_TENANT_ID` | 是 | Entra 应用概述的 Directory (tenant) ID / 目录（租户）ID |
+| Variables | `MS_CLIENT_ID` | 是 | Entra 应用概述的 Application (client) ID / 应用程序（客户端）ID |
+| Secrets | `MS_CLIENT_SECRET` | 是 | 应用“证书和密码”中创建的客户端密钥 **Value / 值**，不是 Secret ID |
+| Secrets | `MAIL_FROM` | 是 | 获准使用的公司发件邮箱完整地址 |
+| Secrets | `MAIL_TO` | 是 | 收件邮箱；多个地址用英文逗号分隔 |
 
-`SMTP_PASSWORD` 通常是邮箱授权码或应用密码。公司 Outlook 租户未允许 SMTP AUTH 时不能直接使用此方式。`MAIL_SUBJECT` 可选，默认“企业战略与人力资源资讯简报”，自动附加北京时间日期。
+| 管理步骤 | 要求 |
+| --- | --- |
+| 注册应用 | 在公司所属 Entra 租户中注册应用 |
+| 创建客户端密钥 | 立即保存密钥值，并记录到期时间；到期前更新 GitHub Secret |
+| 授予发信权限 | Microsoft Graph → **Application permissions → Mail.Send**，完成管理员同意 |
+| 限制邮箱访问 | 由管理员限制应用可使用的发件邮箱范围，并确认 `MAIL_FROM` 在范围内 |
+| 无需配置 | `MS_REFRESH_TOKEN`、`MS_AUTHORITY`、全部 `SMTP_*`；不运行个人 Outlook 授权脚本 |
+
+#### Gmail / Google Workspace
+
+| 准备步骤 | 操作 |
+| --- | --- |
+| 开启两步验证 | 在 [Google 账户安全设置](https://myaccount.google.com/security) 中开启 |
+| 创建应用专用密码 | 打开 [应用专用密码](https://myaccount.google.com/apppasswords)，名称可填 `InformationGathering` |
+| 保存密码 | 将生成的 16 位应用专用密码去掉分组空格，填入 `SMTP_PASSWORD`；不是 Google 登录密码 |
+| 无法创建密码 | 检查账户安全设置；高级保护或 Google Workspace 管理策略可能禁止使用，需联系管理员 |
+
+| 位置 | 名称 | 必填 | 填写值 |
+| --- | --- | --- | --- |
+| Variables | `MAIL_PROVIDER` | 是 | `smtp` |
+| Variables | `SMTP_HOST` | 是 | `smtp.gmail.com` |
+| Variables | `SMTP_SECURITY` | 建议显式填写 | `ssl` |
+| Variables | `SMTP_PORT` | 建议显式填写 | `465` |
+| Secrets | `SMTP_USERNAME` | 是 | 创建应用专用密码的 Google 账户完整邮箱地址 |
+| Secrets | `SMTP_PASSWORD` | 是 | 上一步生成的应用专用密码 |
+| Secrets | `MAIL_TO` | 是 | 任意收件邮箱；可填自己的 Gmail，多个地址用英文逗号分隔 |
+| Secrets | `MAIL_FROM` | 否 | 建议不设置，默认使用 `SMTP_USERNAME`；如已有旧值，请删除或改为当前发件 Gmail 地址 |
+
+#### 通用 SMTP
+
+| 位置 | 名称 | 必填 | 填写值 / 默认值 |
+| --- | --- | --- | --- |
+| Variables | `MAIL_PROVIDER` | 建议显式填写 | `smtp`（默认） |
+| Variables | `SMTP_HOST` | 是 | 邮箱服务商提供的 SMTP 服务器域名，不加 `https://` |
+| Variables | `SMTP_SECURITY` | 否 | `ssl`（默认）或 `starttls`，按服务商要求填写 |
+| Variables | `SMTP_PORT` | 否 | `ssl` 默认 `465`；`starttls` 默认 `587` |
+| Secrets | `SMTP_USERNAME` | 是 | SMTP 登录账号，通常为完整邮箱地址 |
+| Secrets | `SMTP_PASSWORD` | 是 | 邮箱服务商提供的 SMTP 授权码或应用密码 |
+| Secrets | `MAIL_TO` | 是 | 收件邮箱；多个地址用英文逗号分隔 |
+| Secrets | `MAIL_FROM` | 否 | 默认使用 `SMTP_USERNAME`，填写其他地址需服务商允许 |
+
+| 限制 | 说明 |
+| --- | --- |
+| 公司 Outlook SMTP | 当前 SMTP 实现使用账号密码认证；公司可能禁用此方式，仅开启 SMTP AUTH 也不保证可用，建议使用上方 Graph 方案 |
+| 切换发信方式 | 必须同步修改 `MAIL_PROVIDER`；Graph 模式忽略 SMTP 凭据，SMTP 模式忽略 `MS_*` 配置 |
+
+#### 通用选项与运行确认
+
+| 项目 | 配置 / 行为 |
+| --- | --- |
+| 可选标题 | 在 Variables 配置 `MAIL_SUBJECT`；默认“企业战略与人力资源资讯简报”，自动附加北京时间日期 |
+| 正式发信 | Actions → Daily news digest → Run workflow → 选择 `main`，保持 `dry_run` 不勾选（默认） |
+| 仅预览 | 主动勾选 `dry_run`；不发邮件、不更新历史，也不会验证邮件凭据 |
+| 有合格资讯 | 发送 1–8 条资讯的 HTML 表格正文，原文显示为“查看原文”链接；成功后保存排重历史 |
+| 零条合格资讯 | 发送“本次无符合条件的新资讯”统计通知，不更新资讯历史 |
+| 实际运行出错 | 全部来源失败、无可用摘要且模型处理出错、邮件发送失败等情况仍会报错 |
+| 定时执行 | 每天北京时间 08:00 触发，GitHub 排队可能导致延迟 |
+
+| 常见问题 | 优先检查 |
+| --- | --- |
+| 提示缺少 SMTP 变量，但想用 Graph | Variables 中设置 `MAIL_PROVIDER=graph` |
+| 个人 Outlook 提示缺少租户或客户端密钥 | Variables 中设置 `MS_AUTH_MODE=delegated` |
+| Gmail SMTP 返回 535 | 是否使用应用专用密码、用户名是否对应生成密码的账户、两步验证是否开启 |
+| Microsoft 返回 `invalid_grant` | 个人模式重新授权并更新 `MS_REFRESH_TOKEN` |
+| Graph 返回 403 | 权限类型、授权同意、应用访问范围和发件邮箱是否匹配 |
+| 工作流成功但未收到邮件 | 检查是否勾选 `dry_run`、发信日志、`MAIL_TO`、垃圾邮件文件夹；服务接受邮件不等于最终投递成功 |
+
 
 ## 采集配置
 
