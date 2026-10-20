@@ -73,21 +73,24 @@ def title_key(value):
 
 def configuration(dry_run=False):
     required = ['LLM_API_BASE_URL', 'LLM_MODEL', 'LLM_API_KEY']
-    channels = list(dict.fromkeys(part.strip().lower() for part in setting('PUSH_CHANNELS', 'email').split(',') if part.strip()))
-    if not channels or any(channel not in ('email', 'serverchan', 'pushplus') for channel in channels):
-        raise DigestError('PUSH_CHANNELS must contain email, serverchan or pushplus, separated by commas')
-    if not dry_run:
-        if 'email' in channels:
-            required += ['MAIL_TO', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
-        if 'serverchan' in channels:
-            required += ['SERVERCHAN_SENDKEY']
-        if 'pushplus' in channels:
-            required += ['PUSHPLUS_TOKEN']
+    channels = []
+    email_fields = ('MAIL_TO', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD')
+    # MAIL_TO alone is not an email transport; SMTP settings opt into email.
+    if any(setting(name) for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD')):
+        channels.append('email')
+        if not dry_run:
+            required += list(email_fields)
+    if setting('SERVERCHAN_SENDKEY'):
+        channels.append('serverchan')
+    if setting('PUSHPLUS_TOKEN'):
+        channels.append('pushplus')
     missing = [name for name in required if not setting(name)]
     if missing:
         raise DigestError('Missing configuration: ' + ', '.join(
             name + ' (or GMAIL_' + name + ')' if name.startswith('SMTP_') else name
             for name in missing))
+    if not dry_run and not channels:
+        raise DigestError('No delivery channel configured; set SMTP credentials, SERVERCHAN_SENDKEY or PUSHPLUS_TOKEN')
     if not dry_run and 'serverchan' in channels and not re.fullmatch(r'SCT[A-Za-z0-9_-]+', setting('SERVERCHAN_SENDKEY')):
         raise DigestError('SERVERCHAN_SENDKEY must be a ServerChan Turbo SCT SendKey')
     base = setting('LLM_API_BASE_URL').rstrip('/')

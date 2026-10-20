@@ -57,27 +57,29 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 ### 推送渠道：邮件 / Server 酱 / PushPlus
 
-在 GitHub 仓库 **Settings → Secrets and variables → Actions** 配置。默认沿用邮件；只选择手机推送时，无需配置 SMTP 或 `MAIL_TO`。模型与采集配置仍需保留。
+程序自动识别已配置的渠道，**所有已配置渠道都会推送，无需选择渠道**。在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中填写以下配置；只用手机推送时不需要邮箱配置。
 
-| 位置 | 名称 | 值 / 获取方式 |
+| 渠道 | 配置位置与名称 | 自动启用规则 |
 | --- | --- | --- |
-| Variables | `PUSH_CHANNELS` | 默认 `email`；支持 `serverchan`、`pushplus`，多渠道用英文逗号分隔 |
-| Secrets | `SERVERCHAN_SENDKEY` | [Server 酱 Turbo](https://sct.ftqq.com/) 登录后获得的 `SCT…` SendKey，按平台提示绑定接收端；当前不支持 Server 酱³ 的 `sctp…` Key |
-| Secrets | `PUSHPLUS_TOKEN` | [PushPlus](https://www.pushplus.plus/) 登录后取得的 token，按平台提示关注并绑定接收端 |
+| 邮件 | Variables：`SMTP_HOST`；Secrets：`SMTP_USERNAME`、`SMTP_PASSWORD`、`MAIL_TO`；也支持下方的 `GMAIL_SMTP_*` 名称 | 填写 SMTP 服务器、账号或密码任意一项即视为启用，正式运行会检查其余必填项，防止漏发 |
+| Server 酱 Turbo | Secrets：`SERVERCHAN_SENDKEY` | 填入 [Server 酱 Turbo](https://sct.ftqq.com/) 的 `SCT…` SendKey，按平台提示绑定接收端；不支持 Server 酱³ 的 `sctp…` Key |
+| PushPlus | Secrets：`PUSHPLUS_TOKEN` | 填入 [PushPlus](https://www.pushplus.plus/) 的 token，并按平台提示绑定接收端 |
 
-| 使用场景 | `PUSH_CHANNELS` 的值 | 所需凭据 |
-| --- | --- | --- |
-| 仅邮件（默认） | `email` | 原有 SMTP / Gmail 邮件配置 |
-| 仅 Server 酱 | `serverchan` | `SERVERCHAN_SENDKEY` |
-| 仅 PushPlus | `pushplus` | `PUSHPLUS_TOKEN` |
-| 邮件和两个平台同时发送 | `email,serverchan,pushplus` | 邮件配置及两个平台密钥 |
+| 使用场景 | 配置方法 |
+| --- | --- |
+| 仅邮件 | 仅填写完整邮件配置 |
+| 仅手机推送 | 仅填写 Server 酱或 PushPlus 密钥，或同时填写两个 |
+| 三个渠道同时推送 | 填写完整邮件配置和两个平台密钥 |
+| 停用渠道 | 删除对应密钥；停用邮件时清除 SMTP 服务器、账号和密码（包括 `GMAIL_SMTP_*`） |
+| 旧渠道选择变量 | `PUSH_CHANNELS` 已不再使用，可以删除 |
 
 | 行为 | 说明 |
 | --- | --- |
 | 展示格式 | 邮件保持 HTML 表格；手机推送采用 Markdown 分条展示标题、分点摘要、来源及原文链接，具体渲染由平台决定 |
-| 零条资讯 | 向所选渠道发送“本次无符合条件的新资讯”统计通知，不更新资讯历史 |
-| `dry_run` | 不向任何渠道发送，只采集和预览；不会验证推送凭据 |
-| 多渠道失败 | 分别尝试所有渠道；全部被服务接受后才保存资讯历史。部分失败会报错且不更新历史，重跑可能向已经成功的渠道重复发送 |
+| 零条资讯 | 向所有已配置渠道发送“本次无符合条件的新资讯”统计通知，不更新资讯历史 |
+| `dry_run` | 不向任何渠道发送，只采集和预览；允许不配置推送渠道，不验证推送凭据 |
+| 多渠道失败 | 配置检查通过后分别尝试所有渠道；全部被服务接受后才保存资讯历史。部分失败会报错且不更新历史，重跑可能向已经成功的渠道重复发送 |
+| 配置不完整 | 正式运行缺少已启用邮件渠道的必填项或未配置任何渠道时，在采集前报错 |
 | 限额与费用 | 受各平台消息长度、频率及免费/付费套餐限制，请以平台当前规则为准 |
 | 密钥保护 | 密钥只放 Secrets；程序不记录密钥或服务返回正文，不跟随推送接口重定向 |
 
