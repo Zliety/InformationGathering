@@ -14,7 +14,7 @@ import sys
 import tempfile
 import unicodedata
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 import web_sources
@@ -68,22 +68,8 @@ def title_key(value):
 
 def configuration(dry_run=False):
     required = ['LLM_API_BASE_URL', 'LLM_MODEL', 'LLM_API_KEY']
-    mail_provider = setting('MAIL_PROVIDER', 'smtp').lower()
-    if mail_provider not in ('smtp', 'graph'):
-        raise DigestError('MAIL_PROVIDER must be smtp or graph')
     if not dry_run:
-        required += ['MAIL_TO']
-        if mail_provider == 'smtp':
-            required += ['SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
-        else:
-            auth_mode = setting('MS_AUTH_MODE', 'application').lower()
-            if auth_mode not in ('application', 'delegated'):
-                raise DigestError('MS_AUTH_MODE must be application or delegated')
-            required += ['MS_CLIENT_ID']
-            if auth_mode == 'application':
-                required += ['MS_TENANT_ID', 'MS_CLIENT_SECRET', 'MAIL_FROM']
-            else:
-                required += ['MS_REFRESH_TOKEN']
+        required += ['MAIL_TO', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
     missing = [name for name in required if not setting(name)]
     if missing:
         raise DigestError('Missing configuration: ' + ', '.join(missing))
@@ -94,29 +80,12 @@ def configuration(dry_run=False):
     if style not in ('responses', 'chat_completions'):
         raise DigestError('LLM_API_STYLE must be responses or chat_completions')
     security = setting('SMTP_SECURITY', 'ssl').lower()
-    if mail_provider == 'smtp' and not dry_run and security not in ('ssl', 'starttls'):
+    if not dry_run and security not in ('ssl', 'starttls'):
         raise DigestError('SMTP_SECURITY must be ssl or starttls')
     recipients = [s.strip() for s in setting('MAIL_TO').split(',') if s.strip()]
     sender = setting('MAIL_FROM', setting('SMTP_USERNAME'))
     if not dry_run:
-        if mail_provider == 'graph':
-            try:
-                import uuid
-                uuid.UUID(setting('MS_CLIENT_ID'))
-            except (ValueError, AttributeError):
-                raise DigestError('MS_CLIENT_ID must be an Entra ID UUID') from None
-            if auth_mode == 'application':
-                try:
-                    uuid.UUID(setting('MS_TENANT_ID'))
-                except ValueError:
-                    raise DigestError('MS_TENANT_ID must be an Entra ID UUID') from None
-            else:
-                authority = setting('MS_AUTHORITY', 'consumers')
-                if not re.fullmatch(r'[A-Za-z0-9.-]+', authority):
-                    raise DigestError('MS_AUTHORITY is invalid')
-        addresses = [*recipients]
-        if mail_provider == 'smtp' or auth_mode == 'application':
-            addresses.append(sender)
+        addresses = [*recipients, sender]
         if not recipients or any('@' not in s or '\r' in s or '\n' in s for s in addresses):
             raise DigestError('MAIL_FROM and MAIL_TO must be email addresses without line breaks')
         if any(c in setting('MAIL_SUBJECT') for c in '\r\n'):
@@ -139,18 +108,15 @@ def configuration(dry_run=False):
                 max_articles=max_articles, max_model_calls=max_calls,
                 article_timeout=positive_int('LLM_ARTICLE_TIMEOUT', 90),
                 news_keywords=[word.strip() for word in re.split(r'[,，\n]+', setting('NEWS_KEYWORDS')) if word.strip()],
-                mail_provider=mail_provider,
-                auth_mode=setting('MS_AUTH_MODE', 'application').lower(),
-                authority=setting('MS_AUTHORITY', 'consumers'),
                 security=security, recipients=recipients, sender=sender,
-                port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587) if mail_provider == 'smtp' else None,
+                port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587),
                 timeout=positive_int('LLM_TIMEOUT', 300),
                 history=Path(setting('HISTORY_PATH', str(ROOT / '.state/history.json'))))
 
 
 class SafeRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, new_url):
-        # Never forward bearer credentials or client secrets to redirected endpoints.
+        # Never forward API credentials to redirected endpoints.
         raise DigestError('Authenticated HTTPS request redirected; configure the final endpoint URL')
 
 
@@ -449,9 +415,6 @@ def send_email(config, text, rows, notification=False):
             '<p>' + html.escape(line) + '</p>' for line in text.splitlines() if line) + '</body></html>'
     else:
         markup = html_table(rows)
-    if config['mail_provider'] == 'graph':
-        send_graph_email(config, subject, text, markup)
-        return
     message = EmailMessage()
     message['Subject'] = subject
     message['From'] = config['sender']
@@ -472,52 +435,6 @@ def send_email(config, text, rows, notification=False):
         smtp.login(setting('SMTP_USERNAME'), setting('SMTP_PASSWORD'))
         if smtp.send_message(message):
             raise DigestError('SMTP rejected one or more recipients; some recipients may have received the report')
-
-
-def send_graph_email(config, subject, text, markup):
-    client_id = setting('MS_CLIENT_ID')
-    if config['auth_mode'] == 'application':
-        authority = setting('MS_TENANT_ID')
-        form = {'client_id': client_id, 'client_secret': setting('MS_CLIENT_SECRET'),
-                'scope': 'https://graph.microsoft.com/.default', 'grant_type': 'client_credentials'}
-    else:
-        authority = config['authority']
-        form = {'client_id': client_id, 'refresh_token': setting('MS_REFRESH_TOKEN'),
-                'scope': 'https://graph.microsoft.com/Mail.Send offline_access', 'grant_type': 'refresh_token'}
-    token_request = Request(
-        f'https://login.microsoftonline.com/{authority}/oauth2/v2.0/token',
-        data=urlencode(form).encode(), headers={'Content-Type': 'application/x-www-form-urlencoded'}, method='POST')
-    try:
-        token_data = json.loads(fetch(token_request, config['timeout']))
-        access_token = token_data['access_token']
-        if not isinstance(access_token, str) or not access_token:
-            raise ValueError
-    except HTTPError as exc:
-        details = http_error_details(exc)
-        raise DigestError(f'Microsoft OAuth token request returned HTTP {exc.code}{details}; check tenant, app credentials, and consent') from None
-    except (KeyError, TypeError, ValueError):
-        raise DigestError('Microsoft OAuth returned an invalid token response') from None
-
-    payload = {
-        'message': {
-            'subject': subject,
-            'body': {'contentType': 'HTML', 'content': markup},
-            'toRecipients': [{'emailAddress': {'address': address}} for address in config['recipients']],
-        },
-        'saveToSentItems': True,
-    }
-    endpoint = (f'https://graph.microsoft.com/v1.0/users/{quote(config["sender"], safe="")}/sendMail'
-                if config['auth_mode'] == 'application'
-                else 'https://graph.microsoft.com/v1.0/me/sendMail')
-    graph_request = Request(
-        endpoint,
-        data=json.dumps(payload, ensure_ascii=False).encode('utf-8'), method='POST',
-        headers={'Authorization': 'Bearer ' + access_token, 'Content-Type': 'application/json'})
-    try:
-        fetch(graph_request, config['timeout'])
-    except HTTPError as exc:
-        details = http_error_details(exc)
-        raise DigestError(f'Microsoft Graph sendMail returned HTTP {exc.code}{details}; check Mail.Send consent and sender mailbox access') from None
 
 
 def save_history(path, history, text, rows):

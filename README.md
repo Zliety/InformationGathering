@@ -57,50 +57,17 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 ### 邮件配置：先选择发信方式
 
-所有邮件变量都配置在 **GitHub 仓库 → Settings → Secrets and variables → Actions**，不是 Codex 环境设置。名称和值分开填写，值不加引号；只需配置所选方案。
+所有邮件变量都配置在 **GitHub 仓库 → Settings → Secrets and variables → Actions**，不是 Codex 环境设置。名称和值分开填写，值不加引号；当前仅支持使用账号与授权码或应用密码认证的 SMTP 发信。
 
 | 你的发件邮箱 | 推荐方案 | 下方对应章节 |
 | --- | --- | --- |
-| 个人 Outlook / Hotmail | Microsoft Graph 委托授权 | 个人 Outlook |
 | Gmail / Google Workspace | SMTP + 应用专用密码，需账户允许 | Gmail |
 | 其他支持账号密码认证的邮箱 | SMTP + 邮箱授权码或应用密码 | 通用 SMTP |
 
 | 配置位置 | 添加入口 | 存放内容 |
 | --- | --- | --- |
-| **Variables** 标签 | New repository variable | 普通选项、服务器地址、应用 ID |
-| **Secrets** 标签 | New repository secret | 密码、令牌、客户端密钥，以及本项目读取的邮箱地址 |
-
-#### 个人 Outlook / Hotmail
-
-| 位置 | 名称 | 必填 | 填写值 / 获取方式 |
-| --- | --- | --- | --- |
-| Variables | `MAIL_PROVIDER` | 是 | `graph` |
-| Variables | `MS_AUTH_MODE` | 是 | `delegated` |
-| Variables | `MS_AUTHORITY` | 是 | `consumers`，用于个人 Microsoft 账户 |
-| Variables | `MS_CLIENT_ID` | 是 | 应用概述中的 **Application (client) ID / 应用程序（客户端）ID**，不是租户 ID |
-| Secrets | `MS_REFRESH_TOKEN` | 是 | 通过下方授权脚本获取的完整刷新令牌 |
-| Secrets | `MAIL_TO` | 是 | 收件邮箱；多个地址用英文逗号分隔 |
-
-| 步骤 | 操作 | 注意事项 |
-| --- | --- | --- |
-| 1 | 在 [Microsoft Entra](https://entra.microsoft.com/) 的“应用注册”中新增应用 | 支持的账户类型必须包含个人 Microsoft 账户；设备代码流程不需要填写重定向 URI |
-| 2 | 从应用“概述”复制 Application (client) ID | 保存到 Variables 的 `MS_CLIENT_ID` |
-| 3 | 在“身份验证”中启用 **Allow public client flows / 允许公共客户端流** | 修改后保存 |
-| 4 | 在“API 权限”添加 **Microsoft Graph → Delegated permissions → Mail.Send** | 选择委托权限；脚本另外请求 `offline_access` 获取刷新令牌 |
-| 5 | 下载项目，在项目目录的本地终端运行下方命令 | 需要 Python；授权脚本无需安装采集依赖 |
-| 6 | 打开脚本提示的微软登录地址，输入设备代码并同意授权 | 登录哪个邮箱，就由哪个邮箱发信 |
-| 7 | 将终端输出的刷新令牌保存到 Secret `MS_REFRESH_TOKEN` | 不要提交到代码、截图公开或发给他人 |
-
-| 本地系统 | 授权命令（替换 Client ID 后运行） |
-| --- | --- |
-| Windows PowerShell | `$env:MS_CLIENT_ID="你的Client ID"`，然后运行 `python scripts/authorize_outlook.py`；若无 python 命令可使用 `py` |
-| macOS / Linux | `MS_CLIENT_ID='你的Client ID' python3 scripts/authorize_outlook.py` |
-
-| 项目 | 说明 |
-| --- | --- |
-| 发件人 | 完成授权的个人 Outlook 邮箱；可以发送给自己 |
-| 不需要的配置 | `MS_TENANT_ID`、`MS_CLIENT_SECRET`、`MAIL_FROM`、全部 `SMTP_*` |
-| 令牌维护 | 当前程序不会将新刷新令牌写回 GitHub Secrets；授权失效时重新运行脚本并更新 `MS_REFRESH_TOKEN` |
+| **Variables** 标签 | New repository variable | 普通选项、服务器地址 |
+| **Secrets** 标签 | New repository secret | 邮箱授权码或应用专用密码，以及本项目读取的邮箱地址 |
 
 #### Gmail / Google Workspace
 
@@ -113,7 +80,6 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 | 位置 | 名称 | 必填 | 填写值 |
 | --- | --- | --- | --- |
-| Variables | `MAIL_PROVIDER` | 是 | `smtp` |
 | Variables | `SMTP_HOST` | 是 | `smtp.gmail.com` |
 | Variables | `SMTP_SECURITY` | 建议显式填写 | `ssl` |
 | Variables | `SMTP_PORT` | 建议显式填写 | `465` |
@@ -126,7 +92,6 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 | 位置 | 名称 | 必填 | 填写值 / 默认值 |
 | --- | --- | --- | --- |
-| Variables | `MAIL_PROVIDER` | 建议显式填写 | `smtp`（默认） |
 | Variables | `SMTP_HOST` | 是 | 邮箱服务商提供的 SMTP 服务器域名，不加 `https://` |
 | Variables | `SMTP_SECURITY` | 否 | `ssl`（默认）或 `starttls`，按服务商要求填写 |
 | Variables | `SMTP_PORT` | 否 | `ssl` 默认 `465`；`starttls` 默认 `587` |
@@ -138,7 +103,6 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 | 限制 | 说明 |
 | --- | --- |
 | SMTP 认证要求 | 当前 SMTP 实现使用账号密码认证；请确认服务商允许使用授权码或应用专用密码登录 |
-| 切换发信方式 | 必须同步修改 `MAIL_PROVIDER`；Graph 模式忽略 SMTP 凭据，SMTP 模式忽略 `MS_*` 配置 |
 
 #### 通用选项与运行确认
 
@@ -154,11 +118,7 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 | 常见问题 | 优先检查 |
 | --- | --- |
-| 提示缺少 SMTP 变量，但想用 Graph | Variables 中设置 `MAIL_PROVIDER=graph` |
-| 个人 Outlook 提示缺少租户或客户端密钥 | Variables 中设置 `MS_AUTH_MODE=delegated` |
 | Gmail SMTP 返回 535 | 是否使用应用专用密码、用户名是否对应生成密码的账户、两步验证是否开启 |
-| Microsoft 返回 `invalid_grant` | 个人模式重新授权并更新 `MS_REFRESH_TOKEN` |
-| Graph 返回 403 | 权限类型、授权同意、应用访问范围和发件邮箱是否匹配 |
 | 工作流成功但未收到邮件 | 检查是否勾选 `dry_run`、发信日志、`MAIL_TO`、垃圾邮件文件夹；服务接受邮件不等于最终投递成功 |
 
 
@@ -197,7 +157,7 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 最近三次正式报表保存在 `.state/history.json`。程序先按 URL 和规范化标题排重，再将历史标题、链接及摘要交给模型跳过同一事件；同一事件换标题或链接的语义排重仍可能漏判。
 
-SMTP/Graph 接受邮件后才写入历史，并上传到带运行 ID 的独立 history artifact，下次恢复同一分支最新记录。旧版历史格式及固定名称 artifact 仍可恢复。历史 artifact 保存 90 天；预览 artifact 保存 7 天，仓库或组织策略可能缩短时间。artifact 可见性随仓库权限管理。
+SMTP 接受邮件后才写入历史，并上传到带运行 ID 的独立 history artifact，下次恢复同一分支最新记录。旧版历史格式及固定名称 artifact 仍可恢复。历史 artifact 保存 90 天；预览 artifact 保存 7 天，仓库或组织策略可能缩短时间。artifact 可见性随仓库权限管理。
 
 邮件已发送但历史写入或上传失败时，下次可能重复报道；邮件服务器接受也不保证最终送达。历史损坏或恢复失败时会停止，避免静默清空排重信息。
 
@@ -217,7 +177,7 @@ python3 -m venv .venv
 
 离线检查和回归测试不访问实际网站、不使用真实密钥、不发送邮件。实际采集需要能访问来源域名、NewsNow 地址和模型 API；Codex 环境的域名限制与 GitHub 托管 runner 的网络条件不同，某一环境的代理拒绝访问不能证明另一环境可用或不可用。
 
-已删除临时的 API/联网搜索测试脚本及其两个手动工作流。`Checks` 保留正文提取、来源限制、摘要证据、邮件/OAuth 和历史恢复的回归验证；`scripts/authorize_outlook.py` 和 `scripts/restore_history.py` 是正式功能脚本。
+已删除临时的 API/联网搜索测试脚本及其两个手动工作流。`Checks` 保留正文提取、来源限制、摘要证据、邮件 和历史恢复的回归验证；`scripts/restore_history.py` 是正式历史恢复脚本。
 
 来源入口方案参考 [NewsNow](https://github.com/ourongxing/newsnow)（MIT）；正文提取使用 [Trafilatura](https://github.com/adbar/trafilatura)（Apache-2.0）。程序不输出密钥、邮箱密码、完整提示词或模型响应到日志；有效报表可通过预览 artifact 查看。
 
