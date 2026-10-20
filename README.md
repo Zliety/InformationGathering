@@ -46,10 +46,10 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 ### 首次运行与预览
 
-1. 打开 **Actions → Daily news digest → Run workflow**，选择 `main`，保持 `dry_run` 勾选，新建一次运行。旧记录的 **Re-run jobs** 使用旧提交。
+1. 打开 **Actions → Daily news digest → Run workflow**，选择 `main`，如需仅测试而不发信，请主动勾选 `dry_run`，新建一次运行。旧记录的 **Re-run jobs** 使用旧提交。
 2. 工作流自动安装固定版本依赖，恢复历史，采集并生成摘要。`dry_run` 不需要邮箱配置、不发邮件、不更新正式历史，模型调用仍会消耗额度。
 3. 成功生成至少四条资讯后，在运行页面 **Artifacts → news-digest-preview-…** 下载 `report.md` 查看完整表格。
-4. 邮箱配置完成后，取消勾选 `dry_run` 才会实际发信。定时任务按发信模式运行。
+4. 手动运行默认不勾选 `dry_run`，会实际发信并在成功后更新历史；需要仅预览时主动勾选。定时任务按发信模式运行。
 
 默认每天北京时间 **08:00（UTC 00:00）** 执行。可在 [.github/workflows/news.yml](.github/workflows/news.yml) 修改 cron。GitHub 定时可能延迟，公开仓库长期没有活动也可能暂停计划任务。
 
