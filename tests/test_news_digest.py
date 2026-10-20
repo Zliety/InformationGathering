@@ -214,8 +214,10 @@ class DigestTests(unittest.TestCase):
         self.assertIn('&lt;script&gt;', rendered)
         self.assertEqual(rendered.count('<th '), 5)
         self.assertEqual(rendered.count('<td '), 20)
-        self.assertIn('1. 核心事实<br>2. 原文数据', rendered)
-        self.assertIn('<a href="https://example.com/new/1">', rendered)
+        self.assertIn('1. 核心事实</p>', rendered)
+        self.assertIn('2. 原文数据</p>', rendered)
+        self.assertIn('href="https://example.com/new/1"', rendered)
+        self.assertIn('查看原文</a>', rendered)
 
     def test_redirect_never_forwards_api_credentials(self):
         request = Request('https://model.example/v1/responses', headers={'Authorization': 'Bearer test-only-key'})

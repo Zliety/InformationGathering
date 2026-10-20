@@ -395,17 +395,41 @@ def parse_report(text, sources, history):
 
 
 def html_table(rows):
-    def cell(value):
-        return '<br>'.join(html.escape(part) for part in re.split(r'<br\s*/?>', value, flags=re.I))
-
-    head = '<tr>' + ''.join('<th style="border:1px solid #bbb;padding:8px">' + html.escape(h) + '</th>' for h in HEADERS) + '</tr>'
+    # Fixed columns and short link labels keep long URLs from squeezing the summary.
+    widths = (4, 22, 56, 10, 8)
+    labels = ('序号', '标题', '摘要', '来源', '备注')
+    base = 'border:1px solid #dce2e8;padding:12px 10px;vertical-align:top;'
+    head = '<tr>' + ''.join(
+        f'<th width="{width}%" style="{base}width:{width}%;background:#edf2f7;'
+        'text-align:left;font-weight:600;">' + label + '</th>'
+        for width, label in zip(widths, labels)) + '</tr>'
     body = []
-    for row in rows:
-        values = [cell(value) for value in row]
+    for index, row in enumerate(rows):
+        values = [html.escape(value) for value in row]
+        points = re.split(r'<br\s*/?>', row[2], flags=re.I)
+        values[2] = ''.join(
+            '<p style="margin:0 0 10px 0;line-height:1.8;">' + html.escape(point) + '</p>'
+            for point in points)
         url = html.escape(row[4], quote=True)
-        values[4] = f'<a href="{url}">{url}</a>'
-        body.append('<tr>' + ''.join('<td style="border:1px solid #bbb;padding:8px;vertical-align:top">' + v + '</td>' for v in values) + '</tr>')
-    return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body><table style="border-collapse:collapse;font-family:sans-serif;font-size:14px"><thead>' + head + '</thead><tbody>' + ''.join(body) + '</tbody></table></body></html>'
+        values[4] = f'<a href="{url}" style="color:#1769aa;text-decoration:underline;">查看原文</a>'
+        cells = []
+        for column, (width, value) in enumerate(zip(widths, values)):
+            style = base + f'width:{width}%;word-wrap:break-word;overflow-wrap:anywhere;'
+            if column == 0:
+                style += 'text-align:center;color:#667085;'
+            elif column == 1:
+                style += 'font-weight:600;'
+            elif column == 3:
+                style += 'font-size:13px;color:#667085;'
+            cells.append(f'<td width="{width}%" style="{style}">{value}</td>')
+        background = '#ffffff' if index % 2 == 0 else '#f8fafc'
+        body.append(f'<tr bgcolor="{background}">' + ''.join(cells) + '</tr>')
+    return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1"></head>'
+            '<body style="margin:0;padding:12px;color:#202939;background:#ffffff;">'
+            '<table width="100%" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed;'
+            'border-collapse:collapse;font-family:Arial,Microsoft YaHei,sans-serif;font-size:14px;line-height:1.65;">'
+            '<thead>' + head + '</thead><tbody>' + ''.join(body) + '</tbody></table></body></html>')
 
 
 def send_email(config, text, rows):
