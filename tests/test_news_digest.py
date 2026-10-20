@@ -71,13 +71,49 @@ class DigestTests(unittest.TestCase):
     def test_dry_run_does_not_require_email(self):
         for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'MAIL_TO'):
             del os.environ[name]
-        self.assertEqual(app.configuration(True)['port'], 465)
-        with self.assertRaisesRegex(app.DigestError, 'SMTP_HOST'):
+        self.assertIsNone(app.configuration(True)['port'])
+        self.assertEqual(app.configuration(True)['channels'], [])
+        with self.assertRaisesRegex(app.DigestError, 'No delivery channel configured'):
             app.configuration()
 
 
 
 
+
+    def test_all_configured_channels_are_detected_without_selection(self):
+        os.environ.update(SERVERCHAN_SENDKEY='SCTtestkey', PUSHPLUS_TOKEN='push-token',
+                          PUSH_CHANNELS='email')
+        self.assertEqual(app.configuration()['channels'], ['email', 'serverchan', 'pushplus'])
+
+    def test_push_only_does_not_require_mail_credentials(self):
+        for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'MAIL_TO'):
+            del os.environ[name]
+        os.environ['PUSHPLUS_TOKEN'] = 'push-token'
+        config = app.configuration()
+        self.assertEqual(config['channels'], ['pushplus'])
+        self.assertIsNone(config['port'])
+
+    def test_partial_email_configuration_reports_missing_fields(self):
+        del os.environ['SMTP_PASSWORD']
+        os.environ['PUSHPLUS_TOKEN'] = 'push-token'
+        with self.assertRaisesRegex(app.DigestError, 'SMTP_PASSWORD'):
+            app.configuration()
+
+    def test_gmail_aliases_enable_email_without_generic_smtp_names(self):
+        for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD'):
+            os.environ['GMAIL_' + name] = os.environ.pop(name)
+        self.assertEqual(app.configuration()['channels'], ['email'])
+
+    @patch('news_digest.push_channels.deliver')
+    @patch('news_digest.send_email', side_effect=OSError('private diagnostic'))
+    def test_failed_channel_does_not_prevent_other_channels_being_attempted(self, mail, push):
+        os.environ.update(SERVERCHAN_SENDKEY='SCTtestkey', PUSHPLUS_TOKEN='push-token')
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaisesRegex(app.DigestError, 'email'):
+            app.send_notifications(app.configuration(), 'summary', [], notification=True)
+        self.assertEqual([call.args[0] for call in push.call_args_list], ['serverchan', 'pushplus'])
+        self.assertNotIn('private diagnostic', output.getvalue())
+        self.assertFalse(self.path.exists())
 
     def test_rejects_insecure_or_invalid_configuration(self):
         for name, value in (('SMTP_SECURITY', 'none'), ('LLM_API_BASE_URL', 'http://model.example/v1'),
@@ -283,7 +319,7 @@ class DigestTests(unittest.TestCase):
         output = io.StringIO()
         with redirect_stdout(output), redirect_stderr(output):
             self.assertEqual(app.main([]), 1)
-        self.assertIn('mail delivery', output.getvalue())
+        self.assertIn('notification delivery', output.getvalue())
         self.assertNotIn('sensitive', output.getvalue())
         self.assertFalse(self.path.exists())
 
