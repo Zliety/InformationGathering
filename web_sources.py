@@ -339,8 +339,14 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
             continue
         seen.add(key)
         available.append(item)
+    # Lists without publication dates often contain old reports; try dated current links first.
+    available.sort(key=lambda item: item['published_date'] or date.min, reverse=True)
     documents = []
-    for item in rank_candidates(available, settings['news_keywords'])[:settings['max_articles']]:
+    attempted = stale = duplicates = 0
+    ranked = rank_candidates(available, settings['news_keywords'])
+    print(f'Candidate budget: {len(ranked)} available; up to {settings["max_articles"]} downloads', flush=True)
+    for item in ranked[:settings['max_articles']]:
+        attempted += 1
         try:
             data, url = fetch_public(item['url'], item['source']['allowed_domains'], settings['source_timeout'])
             document = extract_document(data, url, item, today)
@@ -348,9 +354,14 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
                     and title_key(document['title']) not in seen_titles):
                 documents.append(document)
                 seen_titles.add(title_key(document['title']))
+            elif document is None:
+                stale += 1
+            else:
+                duplicates += 1
         except SourceError as exc:
             message = f'Article from {item["source"]["id"]}: {exc}'
             problems.append(message)
             print(message, flush=True)
+    print(f'Article attempts: {attempted}; outside date window: {stale}; duplicates: {duplicates}', flush=True)
     print(f'Fetched {len(documents)} original articles; {len(problems)} source/article failures', flush=True)
     return documents, problems

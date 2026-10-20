@@ -102,8 +102,8 @@ MS_CLIENT_ID='<你的应用 Client ID>' python3 scripts/authorize_outlook.py
 | `NEWS_SOURCES_PATH` | `config/news_sources.json` | 来源配置文件路径 |
 | `NEWSNOW_API_URL` | `https://newsnow.busiyi.world/api/s` | 可替换为自部署 NewsNow 的 `/api/s` 地址，不带查询参数 |
 | `NEWS_KEYWORDS` | 空 | 用中英文逗号分隔的额外优先关键词，如厂区城市和公司名称 |
-| `NEWS_MAX_ARTICLES` | `24` | 最多尝试下载的候选文章数，范围 4–60 |
-| `NEWS_MAX_MODEL_CALLS` | `12` | 最多摘要请求数，范围 4–24；收集到八条合格摘要就提前结束 |
+| `NEWS_MAX_ARTICLES` | `48` | 最多尝试下载的候选文章数，范围 4–60 |
+| `NEWS_MAX_MODEL_CALLS` | `20` | 最多摘要请求数，范围 4–24；收集到八条合格摘要就提前结束 |
 | `SOURCE_TIMEOUT` | `15` | 单次来源请求超时秒数，最多 60 |
 | `LLM_TIMEOUT` | `300` | 模型请求超时秒数 |
 | `LLM_ARTICLE_TIMEOUT` | `90` | 单篇摘要超时，实际取它与 `LLM_TIMEOUT` 的较小值 |
@@ -151,3 +151,5 @@ python3 -m venv .venv
 已删除临时的 API/联网搜索测试脚本及其两个手动工作流。`Checks` 保留正文提取、来源限制、摘要证据、邮件/OAuth 和历史恢复的回归验证；`scripts/authorize_outlook.py` 和 `scripts/restore_history.py` 是正式功能脚本。
 
 来源入口方案参考 [NewsNow](https://github.com/ourongxing/newsnow)（MIT）；正文提取使用 [Trafilatura](https://github.com/adbar/trafilatura)（Apache-2.0）。程序不输出密钥、邮箱密码、完整提示词或模型响应到日志；有效报表可通过预览 artifact 查看。
+
+候选不足排查：日志会显示候选下载预算、原文过期/重复数，以及摘要因无关、重复或事实不足而跳过的原因。默认最多下载 48 篇候选、摘要 20 篇；达到 8 条合格资讯时提前停止摘要。增加预算可能增加运行时间和模型费用；若已在 Variables 显式设置旧值，需要手动修改或删除变量才会使用新默认值。网站返回 403/412 时不会绕过访问限制，也不会以不足四条或无证据内容补齐报表。
