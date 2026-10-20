@@ -17,6 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
+import push_channels
 import web_sources
 from web_sources import canonical_url
 
@@ -72,13 +73,23 @@ def title_key(value):
 
 def configuration(dry_run=False):
     required = ['LLM_API_BASE_URL', 'LLM_MODEL', 'LLM_API_KEY']
+    channels = list(dict.fromkeys(part.strip().lower() for part in setting('PUSH_CHANNELS', 'email').split(',') if part.strip()))
+    if not channels or any(channel not in ('email', 'serverchan', 'pushplus') for channel in channels):
+        raise DigestError('PUSH_CHANNELS must contain email, serverchan or pushplus, separated by commas')
     if not dry_run:
-        required += ['MAIL_TO', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
+        if 'email' in channels:
+            required += ['MAIL_TO', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
+        if 'serverchan' in channels:
+            required += ['SERVERCHAN_SENDKEY']
+        if 'pushplus' in channels:
+            required += ['PUSHPLUS_TOKEN']
     missing = [name for name in required if not setting(name)]
     if missing:
         raise DigestError('Missing configuration: ' + ', '.join(
             name + ' (or GMAIL_' + name + ')' if name.startswith('SMTP_') else name
             for name in missing))
+    if not dry_run and 'serverchan' in channels and not re.fullmatch(r'SCT[A-Za-z0-9_-]+', setting('SERVERCHAN_SENDKEY')):
+        raise DigestError('SERVERCHAN_SENDKEY must be a ServerChan Turbo SCT SendKey')
     base = setting('LLM_API_BASE_URL').rstrip('/')
     if not valid_url(base, True) or urlsplit(base).query or urlsplit(base).fragment:
         raise DigestError('LLM_API_BASE_URL must be an HTTPS base URL without credentials, query, or fragment')
@@ -86,11 +97,11 @@ def configuration(dry_run=False):
     if style not in ('responses', 'chat_completions'):
         raise DigestError('LLM_API_STYLE must be responses or chat_completions')
     security = setting('SMTP_SECURITY', 'ssl').lower()
-    if not dry_run and security not in ('ssl', 'starttls'):
+    if not dry_run and 'email' in channels and security not in ('ssl', 'starttls'):
         raise DigestError('SMTP_SECURITY must be ssl or starttls')
     recipients = [s.strip() for s in setting('MAIL_TO').split(',') if s.strip()]
     sender = setting('MAIL_FROM', setting('SMTP_USERNAME'))
-    if not dry_run:
+    if not dry_run and 'email' in channels:
         addresses = [*recipients, sender]
         if not recipients or any('@' not in s or '\r' in s or '\n' in s for s in addresses):
             raise DigestError('MAIL_FROM and MAIL_TO must be email addresses without line breaks')
@@ -109,13 +120,13 @@ def configuration(dry_run=False):
     max_calls = positive_int('NEWS_MAX_MODEL_CALLS', 20)
     if not 4 <= max_articles <= 60 or not 4 <= max_calls <= 24:
         raise DigestError('NEWS_MAX_ARTICLES must be 4-60 and NEWS_MAX_MODEL_CALLS must be 4-24')
-    return dict(base=base, style=style, prompt=prompt, sources_path=sources_path,
+    return dict(channels=channels, base=base, style=style, prompt=prompt, sources_path=sources_path,
                 newsnow_api_url=newsnow_api, source_timeout=min(positive_int('SOURCE_TIMEOUT', 15), 60),
                 max_articles=max_articles, max_model_calls=max_calls,
                 article_timeout=positive_int('LLM_ARTICLE_TIMEOUT', 90),
                 news_keywords=[word.strip() for word in re.split(r'[,，\n]+', setting('NEWS_KEYWORDS')) if word.strip()],
                 security=security, recipients=recipients, sender=sender,
-                port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587),
+                port=positive_int('SMTP_PORT', 465 if security == 'ssl' else 587) if 'email' in channels else None,
                 timeout=positive_int('LLM_TIMEOUT', 300),
                 history=Path(setting('HISTORY_PATH', str(ROOT / '.state/history.json'))))
 
@@ -443,6 +454,30 @@ def send_email(config, text, rows, notification=False):
             raise DigestError('SMTP rejected one or more recipients; some recipients may have received the report')
 
 
+def send_notifications(config, text, rows, notification=False):
+    title = ('本次无符合条件的新资讯' if notification else setting('MAIL_SUBJECT', '企业战略与人力资源资讯简报'))
+    title += ' · ' + datetime.now(BEIJING).strftime('%Y-%m-%d')
+    content = text if notification else push_channels.article_markdown(rows)
+    failures = []
+    for channel in config['channels']:
+        try:
+            if channel == 'email':
+                if notification:
+                    send_email(config, text, rows, notification=True)
+                else:
+                    send_email(config, text, rows)
+            else:
+                token_name = 'SERVERCHAN_SENDKEY' if channel == 'serverchan' else 'PUSHPLUS_TOKEN'
+                push_channels.deliver(channel, setting(token_name), title, content)
+            print(f'Delivery accepted: {channel}', flush=True)
+        except (DigestError, push_channels.PushError, URLError, OSError, smtplib.SMTPException):
+            failures.append(channel)
+            print(f'Delivery failed: {channel}; check credentials, account quota and connectivity', flush=True)
+    if failures:
+        raise DigestError('Delivery failed for: ' + ', '.join(failures) +
+                          '; other channels may have received the message; history unchanged')
+
+
 def save_history(path, history, text, rows):
     report = {'created_at': datetime.now(BEIJING).isoformat(), 'table': text,
               'articles': [{'title': row[1], 'url': row[4], 'summary': row[2]} for row in rows]}
@@ -498,8 +533,8 @@ def main(argv=None):
                 print('Dry run: notification preview (email and history unchanged)\n' + notice)
             else:
                 phase = 'no-news notification delivery'
-                send_email(config, notice, [], notification=True)
-                print('Mail service accepted the no-news notification; report history unchanged')
+                send_notifications(config, notice, [], notification=True)
+                print('Configured channels accepted the no-news notification; report history unchanged')
             return 0
         phase = 'report validation'
         rows = parse_report(text, sources, history)
@@ -511,12 +546,12 @@ def main(argv=None):
         if args.dry_run:
             print('Dry run succeeded; email and official history unchanged')
         else:
-            phase = 'mail delivery'
-            send_email(config, text, rows)
+            phase = 'notification delivery'
+            send_notifications(config, text, rows)
             phase = 'history save (mail service already accepted the email)'
             save_history(config['history'], history, text, rows)
             set_step_output('report_created', 'true')
-            print('Mail service accepted the report; local history saved', flush=True)
+            print('Configured channels accepted the report; local history saved', flush=True)
         return 0
     except DigestError as exc:
         print(f'Error during {phase}: {exc}', file=sys.stderr)

@@ -55,6 +55,32 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 来源全部不可访问时会失败，不会将访问失败当作“没有新闻”。部分来源或摘要失败时，只要有至少一条合格资讯就会生成报表并发信。没有合格资讯时发送统计通知；若无合格摘要且发生模型处理错误，则报错。401/403/404 模型错误会立即停止，不会自动重试模型或发信请求。
 
+### 推送渠道：邮件 / Server 酱 / PushPlus
+
+在 GitHub 仓库 **Settings → Secrets and variables → Actions** 配置。默认沿用邮件；只选择手机推送时，无需配置 SMTP 或 `MAIL_TO`。模型与采集配置仍需保留。
+
+| 位置 | 名称 | 值 / 获取方式 |
+| --- | --- | --- |
+| Variables | `PUSH_CHANNELS` | 默认 `email`；支持 `serverchan`、`pushplus`，多渠道用英文逗号分隔 |
+| Secrets | `SERVERCHAN_SENDKEY` | [Server 酱 Turbo](https://sct.ftqq.com/) 登录后获得的 `SCT…` SendKey，按平台提示绑定接收端；当前不支持 Server 酱³ 的 `sctp…` Key |
+| Secrets | `PUSHPLUS_TOKEN` | [PushPlus](https://www.pushplus.plus/) 登录后取得的 token，按平台提示关注并绑定接收端 |
+
+| 使用场景 | `PUSH_CHANNELS` 的值 | 所需凭据 |
+| --- | --- | --- |
+| 仅邮件（默认） | `email` | 原有 SMTP / Gmail 邮件配置 |
+| 仅 Server 酱 | `serverchan` | `SERVERCHAN_SENDKEY` |
+| 仅 PushPlus | `pushplus` | `PUSHPLUS_TOKEN` |
+| 邮件和两个平台同时发送 | `email,serverchan,pushplus` | 邮件配置及两个平台密钥 |
+
+| 行为 | 说明 |
+| --- | --- |
+| 展示格式 | 邮件保持 HTML 表格；手机推送采用 Markdown 分条展示标题、分点摘要、来源及原文链接，具体渲染由平台决定 |
+| 零条资讯 | 向所选渠道发送“本次无符合条件的新资讯”统计通知，不更新资讯历史 |
+| `dry_run` | 不向任何渠道发送，只采集和预览；不会验证推送凭据 |
+| 多渠道失败 | 分别尝试所有渠道；全部被服务接受后才保存资讯历史。部分失败会报错且不更新历史，重跑可能向已经成功的渠道重复发送 |
+| 限额与费用 | 受各平台消息长度、频率及免费/付费套餐限制，请以平台当前规则为准 |
+| 密钥保护 | 密钥只放 Secrets；程序不记录密钥或服务返回正文，不跟随推送接口重定向 |
+
 ### 邮件配置：先选择发信方式
 
 所有邮件变量都配置在 **GitHub 仓库 → Settings → Secrets and variables → Actions**，不是 Codex 环境设置。名称和值分开填写，值不加引号；当前仅支持使用账号与授权码或应用密码认证的 SMTP 发信。
@@ -164,7 +190,7 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 
 最近三次正式报表保存在 `.state/history.json`。程序先按 URL 和规范化标题排重，再将历史标题、链接及摘要交给模型跳过同一事件；同一事件换标题或链接的语义排重仍可能漏判。
 
-SMTP 接受邮件后才写入历史，并上传到带运行 ID 的独立 history artifact，下次恢复同一分支最新记录。旧版历史格式及固定名称 artifact 仍可恢复。历史 artifact 保存 90 天；预览 artifact 保存 7 天，仓库或组织策略可能缩短时间。artifact 可见性随仓库权限管理。
+所有选定渠道接受消息后才写入历史，并上传到带运行 ID 的独立 history artifact，下次恢复同一分支最新记录。旧版历史格式及固定名称 artifact 仍可恢复。历史 artifact 保存 90 天；预览 artifact 保存 7 天，仓库或组织策略可能缩短时间。artifact 可见性随仓库权限管理。
 
 邮件已发送但历史写入或上传失败时，下次可能重复报道；邮件服务器接受也不保证最终送达。历史损坏或恢复失败时会停止，避免静默清空排重信息。
 
