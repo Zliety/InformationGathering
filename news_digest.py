@@ -381,7 +381,7 @@ def html_table(rows):
     base = 'border:1px solid #dce2e8;padding:12px 10px;vertical-align:top;'
     head = '<tr>' + ''.join(
         f'<th width="{width}%" style="{base}width:{width}%;background:#edf2f7;'
-        'text-align:left;font-weight:600;">' + label + '</th>'
+        'text-align:center;font-weight:600;">' + label + '</th>'
         for width, label in zip(widths, labels)) + '</tr>'
     body = []
     for index, row in enumerate(rows):
