@@ -75,18 +75,25 @@ NewsNow 是候选链接入口，**热榜标题、缓存更新时间和平台简�
 | --- | --- |
 | 开启两步验证 | 在 [Google 账户安全设置](https://myaccount.google.com/security) 中开启 |
 | 创建应用专用密码 | 打开 [应用专用密码](https://myaccount.google.com/apppasswords)，名称可填 `InformationGathering` |
-| 保存密码 | 将生成的 16 位应用专用密码去掉分组空格，填入 `SMTP_PASSWORD`；不是 Google 登录密码 |
+| 保存密码 | 将生成的 16 位应用专用密码去掉分组空格，填入 `GMAIL_SMTP_PASSWORD`；不是 Google 登录密码 |
 | 无法创建密码 | 检查账户安全设置；高级保护或 Google Workspace 管理策略可能禁止使用，需联系管理员 |
 
 | 位置 | 名称 | 必填 | 填写值 |
 | --- | --- | --- | --- |
-| Variables | `SMTP_HOST` | 是 | `smtp.gmail.com` |
-| Variables | `SMTP_SECURITY` | 建议显式填写 | `ssl` |
-| Variables | `SMTP_PORT` | 建议显式填写 | `465` |
-| Secrets | `SMTP_USERNAME` | 是 | 创建应用专用密码的 Google 账户完整邮箱地址 |
-| Secrets | `SMTP_PASSWORD` | 是 | 上一步生成的应用专用密码 |
+| Variables | `GMAIL_SMTP_HOST` | 是 | `smtp.gmail.com` |
+| Variables | `GMAIL_SMTP_SECURITY` | 建议显式填写 | `ssl` |
+| Variables | `GMAIL_SMTP_PORT` | 建议显式填写 | `465` |
+| Secrets | `GMAIL_SMTP_USERNAME` | 是 | 创建应用专用密码的 Google 账户完整邮箱地址 |
+| Secrets | `GMAIL_SMTP_PASSWORD` | 是 | 上一步生成的应用专用密码 |
 | Secrets | `MAIL_TO` | 是 | 任意收件邮箱；可填自己的 Gmail，多个地址用英文逗号分隔 |
-| Secrets | `MAIL_FROM` | 否 | 建议不设置，默认使用 `SMTP_USERNAME`；如已有旧值，请删除或改为当前发件 Gmail 地址 |
+| Secrets | `MAIL_FROM` | 否 | 建议不设置，默认使用 `GMAIL_SMTP_USERNAME`；如已有旧值，请删除或改为当前发件 Gmail 地址 |
+
+| 命名与兼容 | 说明 |
+| --- | --- |
+| Gmail 配置 | 使用 `GMAIL_SMTP_*`，便于识别；程序和工作流均已支持 |
+| 旧配置兼容 | 原有 `SMTP_*` 继续有效；同一配置项同时存在时，非空的 `GMAIL_SMTP_*` 优先 |
+| 共用配置 | `MAIL_TO`、`MAIL_FROM`、`MAIL_SUBJECT` 适用于所有邮箱，不加 Gmail 前缀 |
+| 切换其他邮箱 | 清除 `GMAIL_SMTP_*` 后再配置通用 `SMTP_*`，避免混用不同邮箱服务的设置 |
 
 #### 通用 SMTP
 

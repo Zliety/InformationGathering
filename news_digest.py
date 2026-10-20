@@ -39,6 +39,10 @@ class ModelAPIError(DigestError):
 
 
 def setting(name, default=''):
+    if name in ('SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURITY', 'SMTP_USERNAME', 'SMTP_PASSWORD'):
+        gmail_value = os.environ.get('GMAIL_' + name, '').strip()
+        if gmail_value:
+            return gmail_value
     return os.environ.get(name, '').strip() or default
 
 
@@ -72,7 +76,9 @@ def configuration(dry_run=False):
         required += ['MAIL_TO', 'SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD']
     missing = [name for name in required if not setting(name)]
     if missing:
-        raise DigestError('Missing configuration: ' + ', '.join(missing))
+        raise DigestError('Missing configuration: ' + ', '.join(
+            name + ' (or GMAIL_' + name + ')' if name.startswith('SMTP_') else name
+            for name in missing))
     base = setting('LLM_API_BASE_URL').rstrip('/')
     if not valid_url(base, True) or urlsplit(base).query or urlsplit(base).fragment:
         raise DigestError('LLM_API_BASE_URL must be an HTTPS base URL without credentials, query, or fragment')
