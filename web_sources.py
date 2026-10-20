@@ -270,6 +270,8 @@ def original_html_title(data, extracted_title):
             return None
         value = ' '.join(value.split())
         if (not value or len(value) > 400
+                or value.casefold() in {'首页', '主页', '网站首页', '财联社', '财联社首页', 'home', 'homepage'}
+                or re.fullmatch(r'(?:首页|主页|home)\s*[-_|—–]\s*.+', value, re.I)
                 or re.search(r'document\s*\.|\b(?:var|let|const)\s+\w+\s*=|'
                              r'<\s*/?(?:script|br)\b|\bfunction\s*\(|\bif\s*\(', value, re.I)):
             return None
@@ -285,13 +287,26 @@ def original_html_title(data, extracted_title):
                     title = clean(node.get('content'))
                     if title:
                         return title
-        for node in tree.xpath('//h1'):
-            title = clean(node.text_content())
+        def heading_title(node):
+            # Site logos/navigation can be H1 elements, even on article detail pages.
+            if node.xpath('ancestor::nav | ancestor::header | ancestor::footer | '
+                          'ancestor::*[@role="navigation"]'):
+                return None
+            links = node.xpath('.//a[@href]')
+            if links and all(link.get('href', '').strip() in ('/', '/index', '/index.html') for link in links):
+                return None
+            return clean(node.text_content())
+        for node in tree.xpath('//article//h1 | //main//h1'):
+            title = heading_title(node)
             if title:
                 return title
         title = clean(extracted_title)
         if title:
             return title
+        for node in tree.xpath('//h1'):
+            title = heading_title(node)
+            if title:
+                return title
         for node in tree.xpath('//title'):
             title = clean(node.text_content())
             if title:
