@@ -281,7 +281,7 @@ def summarize_article(config, document, excluded):
         '与历史或本次已选资讯为实质相同事件时也输出 NO_NEWS。'
         '仅根据这一篇提供的原文片段提炼2至6点客观事实，不得从模型知识或其他来源补充。'
         '跳过时只输出 NO_NEWS:IRRELEVANT（无关）、NO_NEWS:DUPLICATE（重复）或'
-        'NO_NEWS:INSUFFICIENT（原文事实不足）。每篇独立判断，不要因为单篇无法满足整份报表4至8条而跳过。'
+        'NO_NEWS:INSUFFICIENT（原文事实不足）。每篇独立判断，整份报表允许1至8条，不要因为资讯数量不足而跳过。'
         'JSON格式：{"summary":[{"text":"摘要一，不加编号",'
         '"evidence":"支持第一点的原文逐字引用，至少8个字符"},'
         '{"text":"摘要二，不加编号","evidence":"支持第二点的原文逐字引用，至少8个字符"}]}。'
@@ -309,9 +309,8 @@ def collect_report(config, history):
         documents, problems = web_sources.collect_documents(config, today, seen_urls, seen_titles)
     except web_sources.SourceError as exc:
         raise DigestError(str(exc)) from None
-    if len(documents) < 4:
-        if problems:
-            raise DigestError('Fewer than 4 original articles after source failures; check collection logs')
+    if not documents:
+        print('No eligible original articles; skipping email', flush=True)
         return 'NO_NEWS', set()
     rows, evidence = [], set()
     failures = 0
@@ -345,9 +344,9 @@ def collect_report(config, history):
             failures += 1
             print(f'Article {index} summary failed: network or timeout error', flush=True)
     print(f'Validated {len(rows)} summaries; {failures} model failures', flush=True)
-    if len(rows) < 4:
-        if failures or problems or len(documents) > config['max_model_calls']:
-            raise DigestError('Fewer than 4 eligible summaries after failures or the processing limit; email and history unchanged')
+    if not rows:
+        if failures:
+            raise DigestError('No eligible summaries and model processing failed; email and history unchanged')
         return 'NO_NEWS', set()
     def cell(value):
         return value.replace('|', r'\|')
@@ -366,8 +365,8 @@ def table_cells(line):
 
 def parse_report(text, sources, history):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not 6 <= len(lines) <= 10:
-        raise DigestError('Report must contain 4 to 8 news items and no surrounding prose')
+    if not 3 <= len(lines) <= 10:
+        raise DigestError('Report must contain 1 to 8 news items and no surrounding prose')
     if tuple(table_cells(lines[0])) != HEADERS:
         raise DigestError('Report table headers do not match the required five columns')
     separator = table_cells(lines[1])

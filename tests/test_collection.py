@@ -68,11 +68,12 @@ class CollectionTests(unittest.TestCase):
                           LLM_SEARCH_TOOL='unsupported', LLM_EXTRA_BODY='not-json')
         self.assertEqual(app.configuration(True)['style'], 'responses')
 
-    def test_insufficient_documents_with_source_failures_do_not_call_model(self):
+    def test_partial_documents_with_source_failures_still_generate_preview(self):
         with patch('news_digest.web_sources.collect_documents', return_value=(documents(2), ['source failed'])), \
-                patch('news_digest.fetch') as fetch, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            self.assertEqual(app.main(['--dry-run']), 1)
-        fetch.assert_not_called()
+                patch('news_digest.fetch', return_value=response()) as fetch, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(app.main(['--dry-run']), 0)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertTrue((self.path.parent / 'report.md').exists())
         self.assertFalse(self.path.exists())
 
     def test_no_new_articles_does_not_call_model_or_send_mail(self):
