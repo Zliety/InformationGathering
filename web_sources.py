@@ -263,6 +263,45 @@ def rank_candidates(candidates, extra_keywords=()):
     return ranked
 
 
+def original_html_title(data, extracted_title):
+    """Read title metadata/visible headings without evaluating publisher scripts."""
+    def clean(value):
+        if not isinstance(value, str):
+            return None
+        value = ' '.join(value.split())
+        if (not value or len(value) > 400
+                or re.search(r'document\s*\.|\b(?:var|let|const)\s+\w+\s*=|'
+                             r'<\s*/?(?:script|br)\b|\bfunction\s*\(|\bif\s*\(', value, re.I)):
+            return None
+        return value
+    try:
+        tree = html.fromstring(data)
+        for node in tree.xpath('//script|//style|//noscript|//template'):
+            node.drop_tree()
+        # ArticleTitle is used by Chinese government publishing systems.
+        for key in ('articletitle', 'og:title', 'twitter:title'):
+            for node in tree.xpath('//meta[@content]'):
+                if (node.get('name') or node.get('property') or '').lower() == key:
+                    title = clean(node.get('content'))
+                    if title:
+                        return title
+        for node in tree.xpath('//h1'):
+            title = clean(node.text_content())
+            if title:
+                return title
+        title = clean(extracted_title)
+        if title:
+            return title
+        for node in tree.xpath('//title'):
+            title = clean(node.text_content())
+            if title:
+                return title
+    except (ValueError, TypeError, etree.LxmlError):
+        pass
+    # Never synthesize a headline from JavaScript or an aggregator's shortened title.
+    raise SourceError('Article has no verifiable original title without script content')
+
+
 def extract_document(data, url, candidate, today):
     if candidate['source']['type'] == 'cninfo':
         if not data.startswith(b'%PDF-'):
@@ -294,7 +333,8 @@ def extract_document(data, url, candidate, today):
         raise SourceError('Article HTML could not be parsed') from None
     if not result:
         raise SourceError('Article body could not be extracted')
-    title, text = result.get('title'), result.get('text')
+    title = original_html_title(data, result.get('title'))
+    text = result.get('text')
     published = parse_date(result.get('date')) or candidate['published_date']
     if not isinstance(title, str) or not title.strip() or not isinstance(text, str) or len(text.strip()) < 120:
         raise SourceError('Article original title or body is missing or too short')
