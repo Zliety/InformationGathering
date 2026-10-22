@@ -1,0 +1,4 @@
+# Monthly completed Daily news digest runs on main; month based on Asia/Shanghai creation time.
+# Includes manual and scheduled runs, including dry_run; each run uses its latest conclusion.
+# failure includes failure, timed_out and startup_failure; other includes cancelled/skipped/etc.
+# YYYY-MM success=N failure=N other=N total=N
