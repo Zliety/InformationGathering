@@ -242,7 +242,7 @@ def summary_points(text, article_text):
     try:
         data = json.loads(fenced.group(1) if fenced else text)
         points = data['summary']
-        if not isinstance(points, list) or not 2 <= len(points) <= 6:
+        if not isinstance(points, list) or not 1 <= len(points) <= 5:
             raise ValueError
         normalized_body = ' '.join(unicodedata.normalize('NFKC', article_text).split())
         result = []
@@ -271,7 +271,10 @@ def summarize_article(config, document, excluded):
         '宏观、劳动政策、行业统计和灾害等非单一企业资讯仍按选题筛选，不按媒体或机构所在地排除。'
         '不得仅凭中文名称或事件地点推断企业归属；原文不足以确认中国企业主体时跳过企业资讯。'
         '不符合企业主体限制时输出 NO_NEWS:IRRELEVANT。'
-        '仅根据这一篇提供的原文片段提炼2至6点客观事实，不得从模型知识或其他来源补充。'
+        '仅根据这一篇提供的原文片段提炼1至5点客观事实，优先控制在1至3点，不得从模型知识或其他来源补充。'
+        '同一事件、同一主题或紧密关联的数据尽量合并成一点，先概括核心事实，再补充必要数据。'
+        '不要将一句完整信息拆为多个编号，不重复表述，不为了凑点数增加背景；确有独立重点时才分点，最多5点。'
+        '合并后仍需保留关键主体、时间、数据及必要口径，每点提供支持该点核心事实的原文逐字引用。'
         '跳过时只输出 NO_NEWS:IRRELEVANT（无关）、NO_NEWS:DUPLICATE（重复）或'
         'NO_NEWS:INSUFFICIENT（原文事实不足）。每篇独立判断，整份报表允许1至8条，不要因为资讯数量不足而跳过。'
         'JSON格式：{"summary":[{"text":"摘要一，不加编号",'
@@ -386,8 +389,8 @@ def parse_report(text, sources, history):
         if key in seen_urls or title_key(title) in seen_titles:
             raise DigestError('Report repeats a URL or title from this report or the previous three reports')
         points = re.split(r'<br\s*/?>', summary, flags=re.I)
-        if len(points) < 2 or any(not re.match(rf'^{n}\.\s*\S', point.strip()) for n, point in enumerate(points, 1)):
-            raise DigestError('Summary must use numbered points separated by <br>')
+        if not 1 <= len(points) <= 5 or any(not re.match(rf'^{n}\.\s*\S', point.strip()) for n, point in enumerate(points, 1)):
+            raise DigestError('Summary must contain 1 to 5 numbered points separated by <br>')
         seen_urls.add(key)
         seen_titles.add(title_key(title))
         rows.append(cells)
