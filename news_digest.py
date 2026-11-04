@@ -275,6 +275,7 @@ def summarize_article(config, document, excluded):
         '同一事件、同一主题或紧密关联的数据尽量合并成一点，先概括核心事实，再补充必要数据。'
         '不要将一句完整信息拆为多个编号，不重复表述，不为了凑点数增加背景；确有独立重点时才分点，最多5点。'
         '合并后仍需保留关键主体、时间、数据及必要口径，每点提供支持该点核心事实的原文逐字引用。'
+        '只有1点时直接写正文，不加序号；2至5点由程序统一编号，JSON中的text均不要自带序号。'
         '跳过时只输出 NO_NEWS:IRRELEVANT（无关）、NO_NEWS:DUPLICATE（重复）或'
         'NO_NEWS:INSUFFICIENT（原文事实不足）。每篇独立判断，整份报表允许1至8条，不要因为资讯数量不足而跳过。'
         'JSON格式：{"summary":[{"text":"摘要一，不加编号",'
@@ -326,7 +327,8 @@ def collect_report(config, history):
             points = summarize_article(task_config, document, excluded)
             if points is None:
                 continue
-            summary = '<br>'.join(f'{n}. {point}' for n, point in enumerate(points, 1))
+            summary = points[0] if len(points) == 1 else '<br>'.join(
+                f'{n}. {point}' for n, point in enumerate(points, 1))
             rows.append([document['title'], summary, document['source'], document['url']])
             seen_urls.add(key)
             seen_titles.add(title)
@@ -389,8 +391,11 @@ def parse_report(text, sources, history):
         if key in seen_urls or title_key(title) in seen_titles:
             raise DigestError('Report repeats a URL or title from this report or the previous three reports')
         points = re.split(r'<br\s*/?>', summary, flags=re.I)
-        if not 1 <= len(points) <= 5 or any(not re.match(rf'^{n}\.\s*\S', point.strip()) for n, point in enumerate(points, 1)):
-            raise DigestError('Summary must contain 1 to 5 numbered points separated by <br>')
+        if (not 1 <= len(points) <= 5
+                or any(not point.strip() for point in points)
+                or (len(points) > 1 and any(not re.match(rf'^{n}\.\s*\S', point.strip())
+                                           for n, point in enumerate(points, 1)))):
+            raise DigestError('Summary must have one plain point or 2 to 5 numbered points separated by <br>')
         seen_urls.add(key)
         seen_titles.add(title_key(title))
         rows.append(cells)

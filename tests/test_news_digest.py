@@ -152,7 +152,7 @@ class DigestTests(unittest.TestCase):
     def test_invalid_table_and_unverified_url_are_rejected(self):
         examples = [table().replace('序号 (No.)', '序号'), 'Here is the report\n' + table(),
                     table().replace('https://example.com/new/1', 'https://invented.example/1'),
-                    table().replace('1. 核心事实<br>2. 原文数据', 'unstructured summary'),
+                    table().replace('1. 核心事实<br>2. 原文数据', '1. 核心事实<br>未编号的第二点'),
                     '\n'.join(table().splitlines()[:2]),
                     table().replace('| 2 |', '| 9 |')]
         for text in examples:
