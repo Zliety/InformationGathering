@@ -313,6 +313,27 @@
         "tjj.sc.gov.cn"
       ],
       "link_pattern": "/.+/(?:content_[^/]+|[0-9a-f]{16,})\\.(?:shtml|html)"
+    },
+    {
+      "id": "dahecube",
+      "name": "大河财立方",
+      "type": "html",
+      "url": "https://www.dahecube.com/",
+      "allowed_domains": [
+        "dahecube.com"
+      ],
+      "link_pattern": "/cube/article\\.html$",
+      "link_query_pattern": "(?:^|&)artid=[A-Za-z0-9_-]+(?:&|$)"
+    },
+    {
+      "id": "sina_cj",
+      "name": "新浪财经头条",
+      "type": "html",
+      "url": "https://t.cj.sina.com.cn/",
+      "allowed_domains": [
+        "t.cj.sina.com.cn"
+      ],
+      "link_pattern": "/articles/view/\\d+/[A-Za-z0-9_-]+(?:\\.html)?/?$"
     }
   ]
 }

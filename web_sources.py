@@ -166,6 +166,8 @@ def load_sources(path):
             if source['type'] == 'html':
                 checked_url(source['url'], domains)
                 re.compile(source['link_pattern'])
+                if 'link_query_pattern' in source:
+                    re.compile(source['link_query_pattern'])
             elif source['type'] == 'cninfo':
                 if domains != ['cninfo.com.cn'] or not re.fullmatch(r'\d{6}', source.get('security_code', '')):
                     raise ValueError
@@ -229,10 +231,14 @@ def discover(source, settings, today=None):
             raise SourceError('Source returned invalid HTML') from None
         entries = []
         pattern = re.compile(source['link_pattern'])
+        query_pattern = re.compile(source['link_query_pattern']) if 'link_query_pattern' in source else None
         for anchor in tree.xpath('//a[@href]'):
             try:
                 url = urljoin(final_url, anchor.get('href', ''))
-                matches = pattern.search(urlsplit(url).path)
+                parsed_url = urlsplit(url)
+                matches = pattern.search(parsed_url.path)
+                if query_pattern and not query_pattern.search(parsed_url.query):
+                    continue
             except ValueError:
                 continue
             if not matches:

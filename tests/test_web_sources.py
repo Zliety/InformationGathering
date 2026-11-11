@@ -127,7 +127,7 @@ class WebSourceTests(unittest.TestCase):
 class ExpandedSourceTests(unittest.TestCase):
     def test_manifest_has_three_provinces_and_three_cities(self):
         sources = web.load_sources(Path(__file__).resolve().parents[1] / 'config/news_sources.json')
-        self.assertEqual(len(sources), 32)
+        self.assertEqual(len(sources), 34)
         ids = {source['id'] for source in sources}
         for area in ('guangdong', 'henan', 'sichuan', 'shenzhen', 'zhengzhou', 'chengdu'):
             for agency in ('gov', 'hrss', 'stats'):
