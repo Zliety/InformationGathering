@@ -275,6 +275,11 @@ def summarize_article(config, document, excluded):
         '宏观、劳动政策、行业整体统计、人力资源报告和灾害疫情等非单一企业资讯仍按选题筛选，'
         '不受名单限制，不按媒体所在地排除，也不得用行业资讯名义收录其他企业的独立动态。'
         '不符合企业主体限制时输出 NO_NEWS:IRRELEVANT。'
+        '重点保留四家公司订单、中标、签约以及各国家或地区的销量、交付、注册量、出口数据；'
+        '不要求原文必须使用“海外”二字，各国/地区销量榜单中明确披露四家公司数据也可以收录。'
+        '数据统计月份可以早于报道发布日期，只要报道本身在程序要求的日期范围内，不能把统计期间当成旧闻日期。'
+        '排重需核对公司、国家/地区、统计期间、指标或订单项目；不同国家、不同月份或不同项目不是同一事件。'
+        '同一事件换媒体重发且无新事实仍应排重，不得仅因都是比亚迪销量就全部判为重复。'
         '仅根据这一篇提供的原文片段提炼1至5点客观事实，优先控制在1至3点，不得从模型知识或其他来源补充。'
         '同一事件、同一主题或紧密关联的数据尽量合并成一点，先概括核心事实，再补充必要数据。'
         '不要将一句完整信息拆为多个编号，不重复表述，不为了凑点数增加背景；确有独立重点时才分点，最多5点。'
@@ -318,6 +323,7 @@ def collect_report(config, history):
     if not documents:
         print('No eligible original articles; preparing notification', flush=True)
         return 'NO_NEWS', set()
+    documents = web_sources.prioritize_documents(documents)
     rows, evidence = [], set()
     failures = 0
     task_config = {**config, 'timeout': min(config['timeout'], config['article_timeout'])}
@@ -326,6 +332,7 @@ def collect_report(config, history):
         if key in seen_urls or title in seen_titles:
             continue
         print(f'Summarizing original article {index}/{min(len(documents), config["max_model_calls"])}', flush=True)
+        print(f'Article context: {document["source"]} | {document["title"][:180]} | {document["url"]}', flush=True)
         stats['summary_attempts'] += 1
         try:
             points = summarize_article(task_config, document, excluded)

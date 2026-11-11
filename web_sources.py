@@ -31,6 +31,30 @@ TOPICS = (
 )
 
 
+COMPANY_TERMS = ('比亚迪', 'BYD', '立讯', 'Luxshare', '蓝思', 'Lens Technology', '歌尔', 'Goertek')
+BUSINESS_TERMS = ('订单', '订购', '签约', '中标', '合同', '销量', '销售', '交付', '注册量',
+                  '上牌', '出口', '扩产', '投资', '合作', 'sales', 'orders', 'deliveries', 'registrations')
+
+
+def business_priority(item):
+    """A retrieval hint, never a substitute for model relevance/evidence checks."""
+    source = item.get('source')
+    issuer = source.get('name', '') if isinstance(source, dict) and source.get('type') == 'cninfo' else ''
+    text = (item.get('title', '') + ' ' + item.get('text', '') + ' ' + issuer).casefold()
+    if not any(term.casefold() in text for term in COMPANY_TERMS):
+        return 0
+    return 2 if any(term.casefold() in text for term in BUSINESS_TERMS) else 1
+
+
+def prioritize_documents(documents):
+    # Reserve early opportunities for at most four company documents, preserving
+    # room for macro/labour/disaster coverage. Selection is still made by the LLM.
+    indices = sorted(range(len(documents)), key=lambda i: business_priority(documents[i]), reverse=True)
+    selected = [i for i in indices if business_priority(documents[i])][:4]
+    used = set(selected)
+    return [documents[i] for i in selected] + [item for i, item in enumerate(documents) if i not in used]
+
+
 class SourceError(Exception):
     """An error safe to record without page bodies or credentials."""
 
@@ -234,7 +258,12 @@ def discover(source, settings, today=None):
         if key not in seen:
             candidates.append(dict(title=title.strip(), url=url, published_date=parse_date(published), source=source))
             seen.add(key)
-    return candidates[:30]
+    ordered = sorted(candidates, key=business_priority, reverse=True)
+    retained = ordered[:30]
+    print(f'Discovery {source["id"]}: {len(candidates)} parsed; '
+          f'{sum(business_priority(item) > 0 for item in candidates)} company hints; '
+          f'{sum(business_priority(item) == 2 for item in retained)} retained business hints', flush=True)
+    return retained
 
 
 def rank_candidates(candidates, extra_keywords=()):
@@ -242,6 +271,12 @@ def rank_candidates(candidates, extra_keywords=()):
         title = item['title'].casefold()
         return sum(word.casefold() in title for word in words)
     ranked, used = [], set()
+    priority = sorted(candidates, key=business_priority, reverse=True)
+    for item in [item for item in priority if business_priority(item)][:4]:
+        key = canonical_url(item['url'])
+        if key not in used:
+            ranked.append(item)
+            used.add(key)
     for _, words in TOPICS:
         options = [item for item in candidates if canonical_url(item['url']) not in used and matches(item, words)]
         if options:
@@ -388,11 +423,15 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
         return ''.join(c for c in unicodedata.normalize('NFKC', value).casefold() if c.isalnum())
     seen, seen_titles = set(excluded_urls), set(excluded_titles)
     available = []
+    history_filtered = date_filtered = 0
     for item in candidates:
         key = canonical_url(item['url'])
         published = item['published_date']
-        if (key in seen or title_key(item['title']) in seen_titles
-                or (published and not today - timedelta(days=2) <= published <= today)):
+        if key in seen or title_key(item['title']) in seen_titles:
+            history_filtered += 1
+            continue
+        if published and not today - timedelta(days=2) <= published <= today:
+            date_filtered += 1
             continue
         seen.add(key)
         available.append(item)
@@ -401,9 +440,16 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
     documents = []
     attempted = stale = duplicates = 0
     ranked = rank_candidates(available, settings['news_keywords'])
+    print(f'Candidate filtering: {history_filtered} history/duplicate URLs; {date_filtered} outside date window', flush=True)
+    print(f'Company/business hints: available={sum(business_priority(item) > 0 for item in ranked)}/'
+          f'{sum(business_priority(item) == 2 for item in ranked)}; '
+          f'download budget={sum(business_priority(item) > 0 for item in ranked[:settings["max_articles"]])}/'
+          f'{sum(business_priority(item) == 2 for item in ranked[:settings["max_articles"]])}', flush=True)
     print(f'Candidate budget: {len(ranked)} available; up to {settings["max_articles"]} downloads', flush=True)
     for item in ranked[:settings['max_articles']]:
         attempted += 1
+        if business_priority(item):
+            print(f'Company article download: {item["source"]["id"]} | {item["title"][:180]}', flush=True)
         try:
             data, url = fetch_public(item['url'], item['source']['allowed_domains'], settings['source_timeout'])
             document = extract_document(data, url, item, today)
@@ -413,6 +459,8 @@ def collect_documents(settings, today, excluded_urls=(), excluded_titles=()):
                 seen_titles.add(title_key(document['title']))
             elif document is None:
                 stale += 1
+                if business_priority(item):
+                    print('Company article skipped: outside publication date window', flush=True)
             else:
                 duplicates += 1
         except SourceError as exc:

@@ -91,6 +91,31 @@ class WebSourceTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertEqual(fetch.call_count, 1)
 
+    def test_company_sales_beyond_first_thirty_links_are_retained(self):
+        links = ''.join(f'<li><a href="/news/{i}.html">普通消息{i}</a>2026-10-19</li>'
+                        for i in range(45))
+        links += '<li><a href="/news/99.html">比亚迪巴西10月销量增长</a>2026-10-19</li>'
+        page = ('<html><meta charset="utf-8"><ul>' + links + '</ul></html>').encode()
+        with patch('web_sources.fetch_public', return_value=(page, SOURCE['url'])), redirect_stdout(io.StringIO()):
+            items = web.discover(SOURCE, {'source_timeout': 15})
+        self.assertEqual(len(items), 30)
+        self.assertEqual(items[0]['title'], '比亚迪巴西10月销量增长')
+
+    def test_business_candidates_are_processed_before_generic_candidates(self):
+        ordinary = [{**candidate(i), 'title': '宏观经济投资统计利润营收报告'} for i in range(10)]
+        sales = {**candidate(99), 'title': 'BYD registrations in Brazil increased in October'}
+        ranked = web.rank_candidates(ordinary + [sales])
+        self.assertEqual(ranked[0], sales)
+        self.assertEqual(len({item['url'] for item in ranked}), len(ranked))
+
+    def test_document_priority_can_find_company_in_body_without_excluding_macro(self):
+        docs = [dict(title='经济数据', text='宏观数据', source='统计局'),
+                dict(title='巴西汽车注册数据', text='比亚迪在当地的销量增长。', source='媒体')]
+        ranked = web.prioritize_documents(docs)
+        self.assertEqual(ranked[0], docs[1])
+        self.assertEqual(len(ranked), 2)
+        self.assertEqual(web.business_priority(dict(title='其他公司在巴西销量增长')), 0)
+
     def test_source_manifest_rejects_unsafe_domains(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'sources.json'
